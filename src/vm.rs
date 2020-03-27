@@ -1,6 +1,8 @@
 use crate::{
   chunk::{Chunk, OpCode},
+  compiler::compile,
   value::Value,
+  CedarError,
 };
 use std::fmt;
 
@@ -19,13 +21,14 @@ impl VM {
     }
   }
 
-  pub fn interpret(&mut self, chunk: Chunk) -> Result<(), InterpretResult> {
+  pub fn interpret(&mut self, source: String) -> Result<(), CedarError> {
+    let chunk = compile(source)?;
     self.chunk = Some(chunk);
     self.ip = 0;
     self.run()
   }
 
-  fn run(&mut self) -> Result<(), InterpretResult> {
+  fn run(&mut self) -> Result<(), CedarError> {
     loop {
       let op = self.read_instruction();
       self.ip += 1;
@@ -101,9 +104,6 @@ impl VM {
   }
   fn read_constant(&self) -> Value {
     self.chunk().constants[self.chunk().code[self.ip] as usize].clone()
-  }
-  fn reset_stack(&mut self) {
-    self.stack.clear();
   }
   fn push(&mut self, value: Value) {
     self.stack.push(value);
