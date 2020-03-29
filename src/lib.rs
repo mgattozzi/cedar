@@ -4,10 +4,13 @@ pub mod scanner;
 pub mod value;
 pub mod vm;
 
+use chunk::ChunkError;
+use compiler::CompilerError;
 use scanner::ScannerError;
 use std::{
   env, fmt, fs,
   io::{self, Write},
+  num::ParseFloatError,
   path::PathBuf,
   process::exit,
 };
@@ -65,6 +68,9 @@ pub enum CedarError {
   InterpretResult(InterpretResult),
   Io(io::Error),
   ScannerError(ScannerError),
+  CompilerError(CompilerError),
+  ParseFloatError(ParseFloatError),
+  ChunkError(ChunkError),
 }
 impl From<io::Error> for CedarError {
   fn from(e: io::Error) -> CedarError {
@@ -81,6 +87,21 @@ impl From<ScannerError> for CedarError {
     CedarError::ScannerError(e)
   }
 }
+impl From<CompilerError> for CedarError {
+  fn from(e: CompilerError) -> CedarError {
+    CedarError::CompilerError(e)
+  }
+}
+impl From<ParseFloatError> for CedarError {
+  fn from(e: ParseFloatError) -> CedarError {
+    CedarError::ParseFloatError(e)
+  }
+}
+impl From<ChunkError> for CedarError {
+  fn from(e: ChunkError) -> CedarError {
+    CedarError::ChunkError(e)
+  }
+}
 
 impl fmt::Display for CedarError {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -88,6 +109,9 @@ impl fmt::Display for CedarError {
       CedarError::InterpretResult(e) => write!(f, "{}", e),
       CedarError::Io(e) => write!(f, "{}", e),
       CedarError::ScannerError(e) => write!(f, "{}", e),
+      CedarError::CompilerError(e) => write!(f, "{}", e),
+      CedarError::ParseFloatError(e) => write!(f, "{}", e),
+      CedarError::ChunkError(e) => write!(f, "{}", e),
     }
   }
 }

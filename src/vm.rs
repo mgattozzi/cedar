@@ -23,6 +23,7 @@ impl VM {
 
   pub fn interpret(&mut self, source: String) -> Result<(), CedarError> {
     let chunk = compile(source)?;
+    chunk.dissasemble("MAIN");
     self.chunk = Some(chunk);
     self.ip = 0;
     self.run()

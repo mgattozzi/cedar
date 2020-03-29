@@ -21,20 +21,36 @@ impl Scanner {
 
   pub fn scan(&mut self) -> Result<Vec<Token>, CedarError> {
     let mut tokens = Vec::new();
+    let mut did_error = false;
     while {
-      tokens.push(self.scan_token()?);
+      match self.scan_token() {
+        Ok(token) => tokens.push(token),
+        Err(e) => {
+          eprintln!("{}", e);
+          did_error = true;
+        }
+      }
       !self.is_at_end()
     } {}
-    Ok(tokens)
+    // We've handled the edge case of no input if the length is 1.
+    // If it is not we need to push an EOF token into the token stream
+    if tokens.len() != 1 {
+      tokens.push(self.make_token(TokenType::EOF));
+    }
+    if !did_error {
+      Ok(tokens)
+    } else {
+      Err(ScannerError::SignalFailure.into())
+    }
   }
   pub fn scan_token(&mut self) -> Result<Token, CedarError> {
-    self.skip_whitespace();
     // Edge case where if you end the file in whitespace we
     // end up doing an out of bounds index in self.advance()
     // and so we check here before continuing
     if self.is_at_end() {
       return Ok(self.make_token(TokenType::EOF));
     }
+    self.skip_whitespace();
     self.start = self.current;
     let c = self.advance() as char;
     match c {
@@ -86,18 +102,21 @@ impl Scanner {
       Ok(self.make_token(TokenType::EOF))
     } else {
       Err(
-        ScannerError::new(format!(
-          "Unexpected character [line {}]: {:?}",
+        ScannerError::new(
+          format!("Unexpected character {:?}", self.peek() as char),
           self.line,
-          self.peek() as char,
-        ))
+        )
         .into(),
       )
     }
   }
 
   pub fn is_at_end(&self) -> bool {
-    self.current == self.source.len() - 1
+    if self.source.is_empty() {
+      true
+    } else {
+      self.current == self.source.len() - 1
+    }
   }
   pub fn make_token(&self, ty: TokenType) -> Token {
     Token {
@@ -174,7 +193,7 @@ impl Scanner {
     }
 
     if self.is_at_end() {
-      return Err(ScannerError::new("Unterminated string.").into());
+      return Err(ScannerError::new("Unterminated string.", self.line).into());
     }
     self.current += 1;
     Ok(self.make_token(TokenType::String))
@@ -189,13 +208,7 @@ impl Scanner {
         self.current += 1;
       }
     } else if self.peek() == '.' && !self.peek_next().is_ascii_digit() {
-      return Err(
-        ScannerError::new(format!(
-          "On line {} a number ends with '.' which is invalid.",
-          self.line
-        ))
-        .into(),
-      );
+      return Err(ScannerError::new("a number ending with '.' is invalid.", self.line).into());
     }
     Ok(self.make_token(TokenType::Number))
   }
@@ -204,11 +217,7 @@ impl Scanner {
       self.current += 1;
       if self.peek() == '-' && !self.peek_next().is_ascii_alphanumeric() {
         return Err(
-          ScannerError::new(format!(
-            "On line {} an identifier ends with '-' which is invalid.",
-            self.line
-          ))
-          .into(),
+          ScannerError::new("an identifier ending with '-' is invalid.", self.line).into(),
         );
       }
     }
@@ -265,7 +274,7 @@ pub struct Token {
   pub lexeme: Cow<'static, str>,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TokenType {
   // Single-character tokens.
   LeftParen,
@@ -316,25 +325,81 @@ pub enum TokenType {
   EOF,
 }
 
+impl TokenType {
+  pub fn as_usize(&self) -> usize {
+    match self {
+      Self::LeftParen => 0,
+      Self::RightParen => 1,
+      Self::LeftBrace => 2,
+      Self::RightBrace => 3,
+      Self::Comma => 4,
+      Self::Dot => 5,
+      Self::Minus => 6,
+      Self::Plus => 7,
+      Self::Semicolon => 8,
+      Self::Slash => 9,
+      Self::Star => 10,
+      Self::Bang => 11,
+      Self::BangEqual => 12,
+      Self::Equal => 13,
+      Self::EqualEqual => 14,
+      Self::Greater => 15,
+      Self::GreaterEqual => 16,
+      Self::Less => 17,
+      Self::LessEqual => 18,
+      Self::Identifier => 19,
+      Self::String => 20,
+      Self::Number => 21,
+      Self::And => 22,
+      Self::Class => 23,
+      Self::Else => 24,
+      Self::False => 25,
+      Self::Fn => 26,
+      Self::For => 27,
+      Self::If => 28,
+      Self::Null => 29,
+      Self::Or => 30,
+      Self::Print => 31,
+      Self::Return => 32,
+      Self::Super => 33,
+      Self::SelfTok => 34,
+      Self::True => 35,
+      Self::Let => 36,
+      Self::While => 37,
+      Self::EOF => 38,
+    }
+  }
+}
 #[derive(Debug)]
-pub struct ScannerError {
-  message: Cow<'static, str>,
+pub enum ScannerError {
+  Error {
+    message: Cow<'static, str>,
+    line: usize,
+  },
+  SignalFailure,
 }
 
 impl ScannerError {
-  fn new<M>(message: M) -> Self
+  fn new<M>(message: M, line: usize) -> Self
   where
     M: Into<Cow<'static, str>>,
   {
-    Self {
+    Self::Error {
       message: message.into(),
+      line,
     }
   }
 }
 
 impl fmt::Display for ScannerError {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "{}", self.message)
+    match self {
+      Self::Error { message, line } => write!(f, "[line {}] Error: {}", line, message),
+      Self::SignalFailure => write!(
+        f,
+        "Error: could not compile program due to invalid input while scanning"
+      ),
+    }
   }
 }
 

@@ -1,4 +1,4 @@
-use crate::value::Value;
+use crate::{value::Value, CedarError};
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,7 +69,12 @@ impl Chunk {
       lines: Vec::new(),
     }
   }
-  pub fn write_chunk(&mut self, byte: OpCode, value: Option<Value>, line: usize) {
+  pub fn write_chunk(
+    &mut self,
+    byte: OpCode,
+    value: Option<Value>,
+    line: usize,
+  ) -> Result<(), CedarError> {
     match byte {
       OpCode::Return
       | OpCode::Negate
@@ -79,6 +84,7 @@ impl Chunk {
       | OpCode::Divide => {
         self.write_byte(byte.into());
         self.lines.push(line);
+        Ok(())
       }
       OpCode::Constant => self.add_constant(value.expect("Constant should have a value"), line),
     }
@@ -87,13 +93,18 @@ impl Chunk {
     self.code.push(byte);
   }
 
-  fn add_constant(&mut self, value: Value, line: usize) {
+  fn add_constant(&mut self, value: Value, line: usize) -> Result<(), CedarError> {
     self.constants.push(value);
+    if self.constants.len() > std::u8::MAX as usize {
+      return Err(ChunkError::TooManyConst.into());
+    }
     self.write_byte(OpCode::Constant.into());
     self.write_byte((self.constants.len() - 1) as u8);
+    // TODO: Make this work for indexing better
     // push twice to keep length for indexing the same
     self.lines.push(line);
     self.lines.push(line);
+    Ok(())
   }
 
   #[allow(dead_code)]
@@ -121,3 +132,15 @@ impl Chunk {
     }
   }
 }
+
+#[derive(Debug)]
+pub enum ChunkError {
+  TooManyConst,
+}
+impl fmt::Display for ChunkError {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "Too many constants used in code")
+  }
+}
+
+impl std::error::Error for ChunkError {}
