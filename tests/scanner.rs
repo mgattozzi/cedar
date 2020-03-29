@@ -2,6 +2,7 @@ use cedar::{
   scanner::{Scanner, Token, TokenType},
   CedarError,
 };
+use pretty_assertions::assert_eq;
 
 #[test]
 /// Note that this test only checks that we get the right tokens not that we get
@@ -137,7 +138,7 @@ fn tokenize() -> Result<(), CedarError> {
       lexeme: "else".into(),
     },
     Token {
-      ty: TokenType::Identifier,
+      ty: TokenType::False,
       line: 26,
       lexeme: "false".into(),
     },
@@ -203,8 +204,8 @@ fn tokenize() -> Result<(), CedarError> {
     },
     Token {
       ty: TokenType::EOF,
-      line: 40,
-      lexeme: "while\n// Test comments and tabs on the next line\n    ".into(),
+      line: 41,
+      lexeme: "".into(),
     },
   ];
   assert_eq!(tokens, token_test);

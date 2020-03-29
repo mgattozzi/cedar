@@ -73,21 +73,21 @@ impl TokenIter {
         // Star
         ParseRule::new(None, Some(TokenIter::binary), Precedence::Factor),
         // Bang
-        ParseRule::new(None, None, Precedence::None),
+        ParseRule::new(Some(TokenIter::unary), None, Precedence::None),
         // BangEqual
-        ParseRule::new(None, None, Precedence::None),
+        ParseRule::new(None, Some(TokenIter::binary), Precedence::Equality),
         // Equal
         ParseRule::new(None, None, Precedence::None),
         // EqualEqual
-        ParseRule::new(None, None, Precedence::None),
+        ParseRule::new(None, Some(TokenIter::binary), Precedence::Equality),
         // Greater
-        ParseRule::new(None, None, Precedence::None),
+        ParseRule::new(None, Some(TokenIter::binary), Precedence::Comparison),
         // GreaterEqual
-        ParseRule::new(None, None, Precedence::None),
+        ParseRule::new(None, Some(TokenIter::binary), Precedence::Comparison),
         // Less
-        ParseRule::new(None, None, Precedence::None),
+        ParseRule::new(None, Some(TokenIter::binary), Precedence::Comparison),
         // LessEqual
-        ParseRule::new(None, None, Precedence::None),
+        ParseRule::new(None, Some(TokenIter::binary), Precedence::Comparison),
         // Identifier
         ParseRule::new(None, None, Precedence::None),
         // String
@@ -101,7 +101,7 @@ impl TokenIter {
         // Else
         ParseRule::new(None, None, Precedence::None),
         // False
-        ParseRule::new(None, None, Precedence::None),
+        ParseRule::new(Some(TokenIter::literal), None, Precedence::None),
         // For
         ParseRule::new(None, None, Precedence::None),
         // Fun
@@ -109,7 +109,7 @@ impl TokenIter {
         // If
         ParseRule::new(None, None, Precedence::None),
         // Null
-        ParseRule::new(None, None, Precedence::None),
+        ParseRule::new(Some(TokenIter::literal), None, Precedence::None),
         // Or
         ParseRule::new(None, None, Precedence::None),
         // Print
@@ -121,7 +121,7 @@ impl TokenIter {
         // Self
         ParseRule::new(None, None, Precedence::None),
         // True
-        ParseRule::new(None, None, Precedence::None),
+        ParseRule::new(Some(TokenIter::literal), None, Precedence::None),
         // Let
         ParseRule::new(None, None, Precedence::None),
         // While
@@ -180,6 +180,14 @@ impl TokenIter {
       .transpose()?;
     self.emit_constant(number)
   }
+  fn literal(&mut self) -> Result<(), CedarError> {
+    match self.previous.as_ref().map(|t| t.ty) {
+      Some(TokenType::False) => self.emit_byte(OpCode::False, None),
+      Some(TokenType::True) => self.emit_byte(OpCode::True, None),
+      Some(TokenType::Null) => self.emit_byte(OpCode::Null, None),
+      _ => unreachable!(),
+    }
+  }
   fn parse_precedence(&mut self, precedence: Precedence) -> Result<(), CedarError> {
     self.advance();
     let token = self
@@ -235,6 +243,7 @@ impl TokenIter {
     self.parse_precedence(Precedence::Unary)?;
     match ty {
       TokenType::Minus => self.emit_byte(OpCode::Negate, None),
+      TokenType::Bang => self.emit_byte(OpCode::Not, None),
       _ => unreachable!(),
     }
   }
@@ -264,6 +273,12 @@ impl TokenIter {
       TokenType::Minus => self.emit_byte(OpCode::Subtract, None),
       TokenType::Star => self.emit_byte(OpCode::Multiply, None),
       TokenType::Slash => self.emit_byte(OpCode::Divide, None),
+      TokenType::BangEqual => self.emit_byte(OpCode::NotEqual, None),
+      TokenType::EqualEqual => self.emit_byte(OpCode::Equal, None),
+      TokenType::Greater => self.emit_byte(OpCode::Greater, None),
+      TokenType::GreaterEqual => self.emit_byte(OpCode::GreaterOrEqual, None),
+      TokenType::Less => self.emit_byte(OpCode::Less, None),
+      TokenType::LessEqual => self.emit_byte(OpCode::LessOrEqual, None),
       _ => unreachable!(),
     }
   }

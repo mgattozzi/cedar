@@ -32,7 +32,7 @@ pub fn main() {
     match e {
       CedarError::InterpretResult(i) => match i {
         InterpretResult::CompileError => exit(65),
-        InterpretResult::RuntimeError => exit(70),
+        InterpretResult::RuntimeError(_, _) => exit(70),
       },
       _ => exit(64),
     }

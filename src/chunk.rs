@@ -10,6 +10,16 @@ pub enum OpCode {
   Subtract,
   Multiply,
   Divide,
+  Null,
+  True,
+  False,
+  Not,
+  Equal,
+  NotEqual,
+  Greater,
+  GreaterOrEqual,
+  Less,
+  LessOrEqual,
 }
 impl From<u8> for OpCode {
   fn from(b: u8) -> Self {
@@ -21,6 +31,16 @@ impl From<u8> for OpCode {
       4 => OpCode::Subtract,
       5 => OpCode::Multiply,
       6 => OpCode::Divide,
+      7 => OpCode::Null,
+      8 => OpCode::True,
+      9 => OpCode::False,
+      10 => OpCode::Not,
+      11 => OpCode::Equal,
+      12 => OpCode::NotEqual,
+      13 => OpCode::Greater,
+      14 => OpCode::GreaterOrEqual,
+      15 => OpCode::Less,
+      16 => OpCode::LessOrEqual,
       _ => panic!("Invalid opcode: {}", b),
     }
   }
@@ -35,6 +55,16 @@ impl From<OpCode> for u8 {
       OpCode::Subtract => 4,
       OpCode::Multiply => 5,
       OpCode::Divide => 6,
+      OpCode::Null => 7,
+      OpCode::True => 8,
+      OpCode::False => 9,
+      OpCode::Not => 10,
+      OpCode::Equal => 11,
+      OpCode::NotEqual => 12,
+      OpCode::Greater => 13,
+      OpCode::GreaterOrEqual => 14,
+      OpCode::Less => 15,
+      OpCode::LessOrEqual => 16,
     }
   }
 }
@@ -49,6 +79,16 @@ impl fmt::Display for OpCode {
       OpCode::Subtract => "Subtract",
       OpCode::Multiply => "Multiply",
       OpCode::Divide => "Divide",
+      OpCode::Null => "null",
+      OpCode::True => "true",
+      OpCode::False => "false",
+      OpCode::Not => "Not",
+      OpCode::Equal => "Equal",
+      OpCode::NotEqual => "NotEqual",
+      OpCode::Greater => "Greate",
+      OpCode::GreaterOrEqual => "GreaterOrEqual",
+      OpCode::Less => "Less",
+      OpCode::LessOrEqual => "LessOrEqual",
     };
     write!(f, "{}", string)
   }
@@ -81,6 +121,16 @@ impl Chunk {
       | OpCode::Add
       | OpCode::Subtract
       | OpCode::Multiply
+      | OpCode::Not
+      | OpCode::Null
+      | OpCode::True
+      | OpCode::False
+      | OpCode::Equal
+      | OpCode::NotEqual
+      | OpCode::Greater
+      | OpCode::GreaterOrEqual
+      | OpCode::Less
+      | OpCode::LessOrEqual
       | OpCode::Divide => {
         self.write_byte(byte.into());
         self.lines.push(line);
@@ -119,12 +169,24 @@ impl Chunk {
         | OpCode::Add
         | OpCode::Subtract
         | OpCode::Multiply
-        | OpCode::Divide => println!("{:04} {:4} {}", i, self.lines[i], op),
+        | OpCode::Divide
+        | OpCode::Not
+        | OpCode::Null
+        | OpCode::False
+        | OpCode::Equal
+        | OpCode::NotEqual
+        | OpCode::Greater
+        | OpCode::GreaterOrEqual
+        | OpCode::Less
+        | OpCode::LessOrEqual
+        | OpCode::True => println!("{:04} {:4} {}", i, self.lines[i], op),
         OpCode::Constant => {
           if let Some((_, location)) = iterator.next() {
             print!("{:04} {:4} {} {:12} ", i, self.lines[i], op, location);
             match self.constants[*location as usize] {
               Value::Number(n) => println!("'{}'", n),
+              Value::Bool(b) => println!("'{}'", b),
+              Value::Null => println!("'null'"),
             }
           }
         }

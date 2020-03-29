@@ -34,7 +34,7 @@ impl Scanner {
     } {}
     // We've handled the edge case of no input if the length is 1.
     // If it is not we need to push an EOF token into the token stream
-    if tokens.len() != 1 {
+    if tokens.is_empty() {
       tokens.push(self.make_token(TokenType::EOF));
     }
     if !did_error {
@@ -44,14 +44,14 @@ impl Scanner {
     }
   }
   pub fn scan_token(&mut self) -> Result<Token, CedarError> {
+    self.skip_whitespace();
+    self.start = self.current;
     // Edge case where if you end the file in whitespace we
     // end up doing an out of bounds index in self.advance()
     // and so we check here before continuing
     if self.is_at_end() {
       return Ok(self.make_token(TokenType::EOF));
     }
-    self.skip_whitespace();
-    self.start = self.current;
     let c = self.advance() as char;
     match c {
       '(' => return Ok(self.make_token(TokenType::LeftParen)),
@@ -115,7 +115,7 @@ impl Scanner {
     if self.source.is_empty() {
       true
     } else {
-      self.current == self.source.len() - 1
+      self.current == self.source.len()
     }
   }
   pub fn make_token(&self, ty: TokenType) -> Token {
@@ -244,7 +244,7 @@ impl Scanner {
       'l' => self.check_keyword(1, 2, "et", TokenType::Let),
       'w' => self.check_keyword(1, 4, "hile", TokenType::While),
       'f' if self.current - self.start > 1 => match self.source[self.start + 1] as char {
-        'a' => self.check_keyword(2, 4, "alse", TokenType::False),
+        'a' => self.check_keyword(2, 3, "lse", TokenType::False),
         'o' => self.check_keyword(2, 1, "r", TokenType::For),
         'n' => TokenType::Fn,
         _ => TokenType::Identifier,
