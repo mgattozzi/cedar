@@ -91,7 +91,7 @@ impl TokenIter {
         // Identifier
         ParseRule::new(None, None, Precedence::None),
         // String
-        ParseRule::new(None, None, Precedence::None),
+        ParseRule::new(Some(TokenIter::string), None, Precedence::None),
         // Number
         ParseRule::new(Some(TokenIter::number), None, Precedence::Factor),
         // And
@@ -179,6 +179,21 @@ impl TokenIter {
       .map(|c| -> Result<Value, CedarError> { Ok(Value::Number(c.lexeme.parse()?)) })
       .transpose()?;
     self.emit_constant(number)
+  }
+  fn string(&mut self) -> Result<(), CedarError> {
+    let mut string = self
+      .previous
+      .as_ref()
+      .ok_or_else(|| CompilerError::ice("No previous value in string"))?
+      .lexeme
+      .clone();
+    // Empty string case
+    if string.len() == 2 {
+      *string.to_mut() = "".into();
+    } else {
+      *string.to_mut() = string[1..string.len() - 1].into();
+    }
+    self.emit_constant(Some(Value::String(string)))
   }
   fn literal(&mut self) -> Result<(), CedarError> {
     match self.previous.as_ref().map(|t| t.ty) {

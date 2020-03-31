@@ -183,9 +183,11 @@ impl Chunk {
         OpCode::Constant => {
           if let Some((_, location)) = iterator.next() {
             print!("{:04} {:4} {} {:12} ", i, self.lines[i], op, location);
-            match self.constants[*location as usize] {
+            match &self.constants[*location as usize] {
               Value::Number(n) => println!("'{}'", n),
               Value::Bool(b) => println!("'{}'", b),
+              Value::String(s) => println!("'{}'", s),
+              Value::Heap(h) => println!("'heap {}'", h),
               Value::Null => println!("'null'"),
             }
           }
