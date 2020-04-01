@@ -20,6 +20,11 @@ pub enum OpCode {
   GreaterOrEqual,
   Less,
   LessOrEqual,
+  Print,
+  Pop,
+  DefineGlobal,
+  GetGlobal,
+  SetGlobal,
 }
 impl From<u8> for OpCode {
   fn from(b: u8) -> Self {
@@ -41,6 +46,11 @@ impl From<u8> for OpCode {
       14 => OpCode::GreaterOrEqual,
       15 => OpCode::Less,
       16 => OpCode::LessOrEqual,
+      17 => OpCode::Print,
+      18 => OpCode::Pop,
+      19 => OpCode::DefineGlobal,
+      20 => OpCode::GetGlobal,
+      21 => OpCode::SetGlobal,
       _ => panic!("Invalid opcode: {}", b),
     }
   }
@@ -65,6 +75,11 @@ impl From<OpCode> for u8 {
       OpCode::GreaterOrEqual => 14,
       OpCode::Less => 15,
       OpCode::LessOrEqual => 16,
+      OpCode::Print => 17,
+      OpCode::Pop => 18,
+      OpCode::DefineGlobal => 19,
+      OpCode::GetGlobal => 20,
+      OpCode::SetGlobal => 21,
     }
   }
 }
@@ -85,10 +100,15 @@ impl fmt::Display for OpCode {
       OpCode::Not => "Not",
       OpCode::Equal => "Equal",
       OpCode::NotEqual => "NotEqual",
-      OpCode::Greater => "Greate",
+      OpCode::Greater => "Greater",
       OpCode::GreaterOrEqual => "GreaterOrEqual",
       OpCode::Less => "Less",
       OpCode::LessOrEqual => "LessOrEqual",
+      OpCode::Print => "Print",
+      OpCode::Pop => "Print",
+      OpCode::DefineGlobal => "DefineGlobal",
+      OpCode::GetGlobal => "GetGlobal",
+      OpCode::SetGlobal => "SetGlobal",
     };
     write!(f, "{}", string)
   }
@@ -131,12 +151,25 @@ impl Chunk {
       | OpCode::GreaterOrEqual
       | OpCode::Less
       | OpCode::LessOrEqual
+      | OpCode::Print
+      | OpCode::Pop
       | OpCode::Divide => {
         self.write_byte(byte.into());
         self.lines.push(line);
         Ok(())
       }
       OpCode::Constant => self.add_constant(value.expect("Constant should have a value"), line),
+      OpCode::DefineGlobal => {
+        self.add_global(value.expect("Global variable should have a value"), line)
+      }
+      OpCode::GetGlobal => self.add_get_global(
+        value.expect("Global variable ref should have a value"),
+        line,
+      ),
+      OpCode::SetGlobal => self.add_set_global(
+        value.expect("Global variable ref should have a value"),
+        line,
+      ),
     }
   }
   pub fn write_byte(&mut self, byte: u8) {
@@ -157,8 +190,75 @@ impl Chunk {
     Ok(())
   }
 
+  fn add_global(&mut self, value: Value, line: usize) -> Result<(), CedarError> {
+    self.constants.push(value);
+    if self.constants.len() > std::u8::MAX as usize {
+      return Err(ChunkError::TooManyConst.into());
+    }
+    self.write_byte(OpCode::DefineGlobal.into());
+    self.write_byte((self.constants.len() - 1) as u8);
+    // TODO: Make this work for indexing better
+    // push twice to keep length for indexing the same
+    self.lines.push(line);
+    self.lines.push(line);
+    Ok(())
+  }
+
+  fn add_get_global(&mut self, value: Value, line: usize) -> Result<(), CedarError> {
+    match self
+      .constants
+      .iter()
+      .enumerate()
+      .find_map(|(i, c)| if *c == value { Some(i) } else { None })
+    {
+      None => {
+        self.constants.push(value);
+        if self.constants.len() > std::u8::MAX as usize {
+          return Err(ChunkError::TooManyConst.into());
+        }
+        self.write_byte(OpCode::GetGlobal.into());
+        self.write_byte((self.constants.len() - 1) as u8);
+      }
+      Some(b) => {
+        self.write_byte(OpCode::GetGlobal.into());
+        self.write_byte(b as u8);
+      }
+    }
+    // TODO: Make this work for indexing better
+    // push twice to keep length for indexing the same
+    self.lines.push(line);
+    self.lines.push(line);
+    Ok(())
+  }
+
+  fn add_set_global(&mut self, value: Value, line: usize) -> Result<(), CedarError> {
+    match self
+      .constants
+      .iter()
+      .enumerate()
+      .find_map(|(i, c)| if *c == value { Some(i) } else { None })
+    {
+      None => {
+        self.constants.push(value);
+        if self.constants.len() > std::u8::MAX as usize {
+          return Err(ChunkError::TooManyConst.into());
+        }
+        self.write_byte(OpCode::SetGlobal.into());
+        self.write_byte((self.constants.len() - 1) as u8);
+      }
+      Some(b) => {
+        self.write_byte(OpCode::SetGlobal.into());
+        self.write_byte(b as u8);
+      }
+    }
+    // TODO: Make this work for indexing better
+    // push twice to keep length for indexing the same
+    self.lines.push(line);
+    self.lines.push(line);
+    Ok(())
+  }
   #[allow(dead_code)]
-  pub fn dissasemble(&self, name: &str) {
+  pub fn disassemble(&self, name: &str) {
     println!("== {} ==", name);
     let mut iterator = self.code.iter().enumerate();
     while let Some((i, instruction)) = iterator.next() {
@@ -179,10 +279,48 @@ impl Chunk {
         | OpCode::GreaterOrEqual
         | OpCode::Less
         | OpCode::LessOrEqual
+        | OpCode::Print
+        | OpCode::Pop
         | OpCode::True => println!("{:04} {:4} {}", i, self.lines[i], op),
         OpCode::Constant => {
           if let Some((_, location)) = iterator.next() {
-            print!("{:04} {:4} {} {:12} ", i, self.lines[i], op, location);
+            print!("{:04} {:4} {}{:12} ", i, self.lines[i], op, location);
+            match &self.constants[*location as usize] {
+              Value::Number(n) => println!("'{}'", n),
+              Value::Bool(b) => println!("'{}'", b),
+              Value::String(s) => println!("'{}'", s),
+              Value::Heap(h) => println!("'heap {}'", h),
+              Value::Null => println!("'null'"),
+            }
+          }
+        }
+        OpCode::DefineGlobal => {
+          if let Some((_, location)) = iterator.next() {
+            print!("{:04} {:4} {}{:8} ", i, self.lines[i], op, location);
+            match &self.constants[*location as usize] {
+              Value::Number(n) => println!("'{}'", n),
+              Value::Bool(b) => println!("'{}'", b),
+              Value::String(s) => println!("'{}'", s),
+              Value::Heap(h) => println!("'heap {}'", h),
+              Value::Null => println!("'null'"),
+            }
+          }
+        }
+        OpCode::GetGlobal => {
+          if let Some((_, location)) = iterator.next() {
+            print!("{:04} {:4} {}{:11} ", i, self.lines[i], op, location);
+            match &self.constants[*location as usize] {
+              Value::Number(n) => println!("'{}'", n),
+              Value::Bool(b) => println!("'{}'", b),
+              Value::String(s) => println!("'{}'", s),
+              Value::Heap(h) => println!("'heap {}'", h),
+              Value::Null => println!("'null'"),
+            }
+          }
+        }
+        OpCode::SetGlobal => {
+          if let Some((_, location)) = iterator.next() {
+            print!("{:04} {:4} {}{:11} ", i, self.lines[i], op, location);
             match &self.constants[*location as usize] {
               Value::Number(n) => println!("'{}'", n),
               Value::Bool(b) => println!("'{}'", b),
@@ -203,7 +341,9 @@ pub enum ChunkError {
 }
 impl fmt::Display for ChunkError {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "Too many constants used in code")
+    match self {
+      ChunkError::TooManyConst => write!(f, "Too many constants used in code"),
+    }
   }
 }
 

@@ -29,7 +29,7 @@ pub struct TokenIter {
 
 impl fmt::Debug for TokenIter {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    self.chunk.dissasemble("MAIN");
+    self.chunk.disassemble("MAIN");
     write!(
       f,
       "Iter: {:#?}\nPrevious: {:#?}\nCurrent: {:#?}\n",
@@ -89,7 +89,7 @@ impl TokenIter {
         // LessEqual
         ParseRule::new(None, Some(TokenIter::binary), Precedence::Comparison),
         // Identifier
-        ParseRule::new(None, None, Precedence::None),
+        ParseRule::new(Some(TokenIter::variable), None, Precedence::None),
         // String
         ParseRule::new(Some(TokenIter::string), None, Precedence::None),
         // Number
@@ -132,11 +132,21 @@ impl TokenIter {
     }
   }
   fn compile(mut self) -> Result<Chunk, CedarError> {
+    let mut failed = false;
     self.advance();
-    self.expression()?;
-    self.consume(TokenType::EOF, "Expect end of expression")?;
-    self.end_compiler()?;
-    Ok(self.chunk)
+    while !self.match_token(&TokenType::EOF)? {
+      if let Err(e) = self.declaration() {
+        failed = true;
+        eprintln!("{}", e);
+        self.synchronize()?;
+      }
+    }
+    if failed {
+      Err(CompilerError::failed().into())
+    } else {
+      self.end_compiler()?;
+      Ok(self.chunk)
+    }
   }
   fn advance(&mut self) {
     let current = self.iter.next();
@@ -148,12 +158,76 @@ impl TokenIter {
   where
     M: Into<Cow<'static, str>>,
   {
-    if self.current.as_ref().unwrap().ty == ty {
+    if self
+      .current
+      .as_ref()
+      .ok_or_else(|| CompilerError::ice("No current value while in consume function"))?
+      .ty
+      == ty
+    {
       self.advance();
       Ok(())
     } else {
       Err(CompilerError::new(self.current.as_ref().unwrap(), message).into())
     }
+  }
+  fn match_token(&mut self, ty: &TokenType) -> Result<bool, CedarError> {
+    if !self.check(ty)? {
+      Ok(false)
+    } else {
+      self.advance();
+      Ok(true)
+    }
+  }
+  fn check(&mut self, ty: &TokenType) -> Result<bool, CedarError> {
+    Ok(
+      self
+        .current
+        .as_ref()
+        .ok_or_else(|| CompilerError::ice("No current value while in check function"))?
+        .ty
+        == *ty,
+    )
+  }
+  fn synchronize(&mut self) -> Result<(), CedarError> {
+    while !self.check(&TokenType::EOF)? {
+      if self
+        .previous
+        .as_ref()
+        .map(|p| p.ty == TokenType::Semicolon)
+        .unwrap_or(false)
+      {
+        break;
+      }
+
+      match self
+        .current
+        .as_ref()
+        .ok_or_else(|| CompilerError::ice("No current value in synchronize"))?
+        .ty
+      {
+        TokenType::Class
+        | TokenType::Fn
+        | TokenType::Let
+        | TokenType::For
+        | TokenType::If
+        | TokenType::While
+        | TokenType::Print
+        | TokenType::Return => break,
+        _ => self.advance(),
+      }
+    }
+    Ok(())
+  }
+  fn parse_variable(&mut self) -> Result<Cow<'static, str>, CedarError> {
+    self.consume(TokenType::Identifier, "Expect variable name.")?;
+    Ok(
+      self
+        .previous
+        .clone()
+        .ok_or_else(|| CompilerError::ice("No previous value in let_declaration"))?
+        .lexeme,
+    )
   }
   fn emit_byte(&mut self, byte: OpCode, value: Option<Value>) -> Result<(), CedarError> {
     let line = self
@@ -172,7 +246,7 @@ impl TokenIter {
   fn emit_constant(&mut self, value: Option<Value>) -> Result<(), CedarError> {
     self.emit_byte(OpCode::Constant, value)
   }
-  fn number(&mut self) -> Result<(), CedarError> {
+  fn number(&mut self, _: bool) -> Result<(), CedarError> {
     let number = self
       .previous
       .as_ref()
@@ -180,7 +254,7 @@ impl TokenIter {
       .transpose()?;
     self.emit_constant(number)
   }
-  fn string(&mut self) -> Result<(), CedarError> {
+  fn string(&mut self, _: bool) -> Result<(), CedarError> {
     let mut string = self
       .previous
       .as_ref()
@@ -195,7 +269,7 @@ impl TokenIter {
     }
     self.emit_constant(Some(Value::String(string)))
   }
-  fn literal(&mut self) -> Result<(), CedarError> {
+  fn literal(&mut self, _: bool) -> Result<(), CedarError> {
     match self.previous.as_ref().map(|t| t.ty) {
       Some(TokenType::False) => self.emit_byte(OpCode::False, None),
       Some(TokenType::True) => self.emit_byte(OpCode::True, None),
@@ -210,13 +284,13 @@ impl TokenIter {
       .as_ref()
       .ok_or_else(|| CompilerError::ice("No previous value in parse_precedence"))?;
     let prefix = self.get_rule(&token.ty).prefix;
+    let can_assign = precedence <= Precedence::Assignment;
     match prefix {
       Some(prefix) => {
-        prefix(self)?;
+        prefix(self, can_assign)?;
       }
       None => return Err(CompilerError::new(&token, "Expected expression").into()),
     }
-
     while {
       match self.current.as_ref() {
         Some(token) => precedence <= self.get_rule(&token.ty).precedence,
@@ -231,25 +305,85 @@ impl TokenIter {
       let infix = self.get_rule(&token.ty).infix;
       match infix {
         Some(infix) => {
-          infix(self)?;
+          infix(self, can_assign)?;
         }
         None => return Err(CompilerError::new(&token, "Expected infix function").into()),
       }
     }
 
-    Ok(())
+    if can_assign && self.match_token(&TokenType::Equal)? {
+      Err(CompilerError::new(&self.previous.as_ref().unwrap(), "Expected infix function").into())
+    } else {
+      Ok(())
+    }
   }
   fn get_rule(&self, ty: &TokenType) -> &ParseRule {
     &self.rules[ty.as_usize()]
   }
+  fn declaration(&mut self) -> Result<(), CedarError> {
+    if self.match_token(&TokenType::Let)? {
+      self.let_declaration()
+    } else {
+      self.statement()
+    }
+  }
+  fn let_declaration(&mut self) -> Result<(), CedarError> {
+    let global = self.parse_variable()?;
+    if self.match_token(&TokenType::Equal)? {
+      self.expression()?;
+    } else {
+      self.emit_byte(OpCode::Null, None)?;
+    }
+    self.consume(
+      TokenType::Semicolon,
+      "Expect ';' after variable declaration.",
+    )?;
+    self.define_variable(global)
+  }
+  fn define_variable(&mut self, global: Cow<'static, str>) -> Result<(), CedarError> {
+    self.emit_byte(OpCode::DefineGlobal, Some(Value::String(global)))
+  }
+  fn variable(&mut self, can_assign: bool) -> Result<(), CedarError> {
+    self.named_variable(can_assign)
+  }
+  fn named_variable(&mut self, can_assign: bool) -> Result<(), CedarError> {
+    let arg = self
+      .previous
+      .clone()
+      .ok_or_else(|| CompilerError::ice("No previous value in variable"))?
+      .lexeme;
+    if can_assign && self.match_token(&TokenType::Equal)? {
+      self.expression()?;
+      self.emit_byte(OpCode::SetGlobal, Some(Value::String(arg)))
+    } else {
+      self.emit_byte(OpCode::GetGlobal, Some(Value::String(arg)))
+    }
+  }
+  fn statement(&mut self) -> Result<(), CedarError> {
+    if self.match_token(&TokenType::Print)? {
+      self.print_statement()
+    } else {
+      self.expression_statement()
+    }
+  }
+  fn print_statement(&mut self) -> Result<(), CedarError> {
+    self.expression()?;
+    self.consume(TokenType::Semicolon, "Expect ';' after value.")?;
+    self.emit_byte(OpCode::Print, None)
+  }
+  fn expression_statement(&mut self) -> Result<(), CedarError> {
+    self.expression()?;
+    self.consume(TokenType::Semicolon, "Expect ';' after value.")?;
+    self.emit_byte(OpCode::Pop, None)
+  }
   fn expression(&mut self) -> Result<(), CedarError> {
     self.parse_precedence(Precedence::Assignment)
   }
-  fn grouping(&mut self) -> Result<(), CedarError> {
+  fn grouping(&mut self, _: bool) -> Result<(), CedarError> {
     self.expression()?;
     self.consume(TokenType::RightParen, "Expect ')' after expression")
   }
-  fn unary(&mut self) -> Result<(), CedarError> {
+  fn unary(&mut self, _: bool) -> Result<(), CedarError> {
     let ty = self
       .previous
       .as_ref()
@@ -262,7 +396,7 @@ impl TokenIter {
       _ => unreachable!(),
     }
   }
-  fn binary(&mut self) -> Result<(), CedarError> {
+  fn binary(&mut self, _: bool) -> Result<(), CedarError> {
     let operator_ty = self
       .previous
       .as_ref()
@@ -333,11 +467,12 @@ impl ParseRule {
   }
 }
 
-type ParseFn = Option<fn(&mut TokenIter) -> Result<(), CedarError>>;
+type ParseFn = Option<fn(&mut TokenIter, bool) -> Result<(), CedarError>>;
 
 #[derive(Debug)]
-pub struct CompilerError {
-  message: Cow<'static, str>,
+pub enum CompilerError {
+  Message { message: Cow<'static, str> },
+  Failed,
 }
 
 impl CompilerError {
@@ -345,7 +480,7 @@ impl CompilerError {
   where
     M: Into<Cow<'static, str>>,
   {
-    Self {
+    CompilerError::Message {
       message: {
         let message = message.into();
         if token.ty == TokenType::EOF {
@@ -360,11 +495,14 @@ impl CompilerError {
       },
     }
   }
+  fn failed() -> Self {
+    CompilerError::Failed
+  }
   fn ice<M>(message: M) -> Self
   where
     M: Into<Cow<'static, str>>,
   {
-    Self {
+    CompilerError::Message {
       message: format!("[ICE] Error: {}", message.into()).into(),
     }
   }
@@ -372,7 +510,10 @@ impl CompilerError {
 
 impl fmt::Display for CompilerError {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "{}", self.message)
+    match self {
+      CompilerError::Message { message } => write!(f, "{}", message),
+      CompilerError::Failed => write!(f, ""),
+    }
   }
 }
 

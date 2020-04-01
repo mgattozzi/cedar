@@ -14,7 +14,7 @@ use std::{
   path::PathBuf,
   process::exit,
 };
-use vm::{InterpretResult, VM};
+use vm::{InterpreterResult, VM};
 
 pub fn main() {
   let args = env::args();
@@ -28,44 +28,57 @@ pub fn main() {
   };
 
   if let Err(e) = res {
-    eprintln!("{}", e);
     match e {
-      CedarError::InterpretResult(i) => match i {
-        InterpretResult::CompileError => exit(65),
-        InterpretResult::RuntimeError(_, _) => exit(70),
+      CedarError::CompilerError(c) => match c {
+        CompilerError::Failed => exit(64),
+        _ => unreachable!(),
       },
-      _ => exit(64),
+      CedarError::InterpreterResult(i) => match i {
+        InterpreterResult::CompileError(_) => {
+          eprintln!("{}", i);
+          exit(65);
+        }
+        InterpreterResult::RuntimeError(_, _) => {
+          eprintln!("{}", i);
+          exit(70);
+        }
+      },
+      _ => {
+        eprintln!("{}", e);
+        exit(64);
+      }
     }
   }
 }
 
 fn run_file(path: PathBuf) -> Result<(), CedarError> {
-  run(fs::read_to_string(&path)?)
+  let mut vm = VM::new();
+  run(&mut vm, fs::read_to_string(&path)?)
 }
 
 fn repl() -> Result<(), CedarError> {
   let stdin = io::stdin();
   let mut stdout = io::stdout();
+  let mut vm = VM::new();
   loop {
     print!("> ");
     stdout.flush()?;
     let mut line = String::new();
     stdin.read_line(&mut line)?;
     stdout.flush()?;
-    if let Err(e) = run(line) {
+    if let Err(e) = run(&mut vm, line) {
       eprintln!("{}", e);
     }
   }
 }
 
-fn run(source: String) -> Result<(), CedarError> {
-  let mut vm = VM::new();
+fn run(vm: &mut VM, source: String) -> Result<(), CedarError> {
   vm.interpret(source)
 }
 
 #[derive(Debug)]
 pub enum CedarError {
-  InterpretResult(InterpretResult),
+  InterpreterResult(InterpreterResult),
   Io(io::Error),
   ScannerError(ScannerError),
   CompilerError(CompilerError),
@@ -77,9 +90,9 @@ impl From<io::Error> for CedarError {
     CedarError::Io(e)
   }
 }
-impl From<InterpretResult> for CedarError {
-  fn from(e: InterpretResult) -> CedarError {
-    CedarError::InterpretResult(e)
+impl From<InterpreterResult> for CedarError {
+  fn from(e: InterpreterResult) -> CedarError {
+    CedarError::InterpreterResult(e)
   }
 }
 impl From<ScannerError> for CedarError {
@@ -106,7 +119,7 @@ impl From<ChunkError> for CedarError {
 impl fmt::Display for CedarError {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      CedarError::InterpretResult(e) => write!(f, "{}", e),
+      CedarError::InterpreterResult(e) => write!(f, "{}", e),
       CedarError::Io(e) => write!(f, "{}", e),
       CedarError::ScannerError(e) => write!(f, "{}", e),
       CedarError::CompilerError(e) => write!(f, "{}", e),

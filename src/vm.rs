@@ -6,6 +6,7 @@ use crate::{
 };
 use std::{
   borrow::{Borrow, Cow},
+  collections::HashMap,
   fmt,
 };
 
@@ -14,6 +15,7 @@ pub struct VM {
   ip: usize,
   stack: Vec<Value>,
   heap: Vec<(Value, bool)>,
+  globals: HashMap<Cow<'static, str>, Value>,
 }
 
 impl VM {
@@ -23,12 +25,13 @@ impl VM {
       ip: 0,
       stack: Vec::new(),
       heap: Vec::new(),
+      globals: HashMap::new(),
     }
   }
 
   pub fn interpret(&mut self, source: String) -> Result<(), CedarError> {
     let chunk = compile(source)?;
-    chunk.dissasemble("MAIN");
+    // chunk.disassemble("MAIN");
     self.chunk = Some(chunk);
     self.ip = 0;
     self.run()
@@ -40,26 +43,32 @@ impl VM {
       self.ip += 1;
       match op {
         OpCode::Return => {
-          // Collect garbage on exit not that it matters
+          // Collect garbage on exit not that it matters much
           self.collect_garbage();
-          self.print_stack();
-          self.print_heap();
+          // self.debug();
           return Ok(());
         }
         OpCode::Constant => {
-          self.push(self.read_constant());
-          // Offset the pointer to the next instruction, not the constant value
-          self.ip += 1;
+          let constant = self.read_constant();
+          self.push(constant);
         }
         OpCode::Negate => {
-          let n = -self.pop().as_num().ok_or_else(|| {
-            InterpretResult::runtime_error("Operand must be a number", self.line())
-          })?;
+          let n = -self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?
+            .as_num()
+            .ok_or_else(|| {
+              InterpreterResult::runtime_error("Operand must be a number", self.line())
+            })?;
           self.push(Value::Number(n));
         }
         OpCode::Add => {
-          let b = self.pop();
-          let a = self.pop();
+          let b = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?;
+          let a = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?;
           match (b, a) {
             (Value::Number(b), Value::Number(a)) => self.push(Value::Number(a + b)),
             (Value::String(b), Value::String(a)) => {
@@ -88,18 +97,18 @@ impl VM {
             }
             (_, Value::Number(_)) => {
               return Err(
-                InterpretResult::runtime_error("Second operand is not a number", self.line())
+                InterpreterResult::runtime_error("Second operand is not a number", self.line())
                   .into(),
               )
             }
             (Value::Number(_), _) => {
               return Err(
-                InterpretResult::runtime_error("First operand is not a number", self.line()).into(),
+                InterpreterResult::runtime_error("First operand is not a number", self.line()).into(),
               )
             }
             (_, _) => {
               return Err(
-                InterpretResult::runtime_error(
+                InterpreterResult::runtime_error(
                   "Addition operator can only be used with 2 number values or a String and another value",
                   self.line(),
                 )
@@ -109,30 +118,54 @@ impl VM {
           }
         }
         OpCode::Subtract => {
-          let b = self.pop().as_num().ok_or_else(|| {
-            InterpretResult::runtime_error("Operand must be a number", self.line())
-          })?;
-          let a = self.pop().as_num().ok_or_else(|| {
-            InterpretResult::runtime_error("Operand must be a number", self.line())
-          })?;
+          let b = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?
+            .as_num()
+            .ok_or_else(|| {
+              InterpreterResult::runtime_error("Operand must be a number", self.line())
+            })?;
+          let a = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?
+            .as_num()
+            .ok_or_else(|| {
+              InterpreterResult::runtime_error("Operand must be a number", self.line())
+            })?;
           self.push(Value::Number(a - b));
         }
         OpCode::Multiply => {
-          let b = self.pop().as_num().ok_or_else(|| {
-            InterpretResult::runtime_error("Operand must be a number", self.line())
-          })?;
-          let a = self.pop().as_num().ok_or_else(|| {
-            InterpretResult::runtime_error("Operand must be a number", self.line())
-          })?;
+          let b = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?
+            .as_num()
+            .ok_or_else(|| {
+              InterpreterResult::runtime_error("Operand must be a number", self.line())
+            })?;
+          let a = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?
+            .as_num()
+            .ok_or_else(|| {
+              InterpreterResult::runtime_error("Operand must be a number", self.line())
+            })?;
           self.push(Value::Number(a * b));
         }
         OpCode::Divide => {
-          let b = self.pop().as_num().ok_or_else(|| {
-            InterpretResult::runtime_error("Operand must be a number", self.line())
-          })?;
-          let a = self.pop().as_num().ok_or_else(|| {
-            InterpretResult::runtime_error("Operand must be a number", self.line())
-          })?;
+          let b = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?
+            .as_num()
+            .ok_or_else(|| {
+              InterpreterResult::runtime_error("Operand must be a number", self.line())
+            })?;
+          let a = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?
+            .as_num()
+            .ok_or_else(|| {
+              InterpreterResult::runtime_error("Operand must be a number", self.line())
+            })?;
           self.push(Value::Number(a / b));
         }
         OpCode::False => {
@@ -145,43 +178,52 @@ impl VM {
           self.push(Value::Null);
         }
         OpCode::Not => {
-          let boolean = self.pop().as_bool().ok_or_else(|| {
-            InterpretResult::runtime_error("Operand must be a boolean", self.line())
-          })?;
+          let boolean = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?
+            .as_bool()
+            .ok_or_else(|| {
+              InterpreterResult::runtime_error("Operand must be a boolean", self.line())
+            })?;
           self.push(Value::Bool(!boolean));
         }
         OpCode::Equal => {
-          let b = self.pop();
-          let a = self.pop();
+          let b = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?;
+          let a = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?;
           match (b, a) {
             (Value::Bool(b), Value::Bool(a)) => self.push(Value::Bool(a == b)),
             (Value::String(b), Value::String(a)) => self.push(Value::Bool(a == b)),
             (_, Value::String(_)) => {
               return Err(
-                InterpretResult::runtime_error("Second operand is not a String", self.line())
+                InterpreterResult::runtime_error("Second operand is not a String", self.line())
                   .into(),
               )
             }
             (Value::String(_), _) => {
               return Err(
-                InterpretResult::runtime_error("First operand is not a String", self.line()).into(),
+                InterpreterResult::runtime_error("First operand is not a String", self.line())
+                  .into(),
               )
             }
             (_, Value::Bool(_)) => {
               return Err(
-                InterpretResult::runtime_error("Second operand is not a boolean", self.line())
+                InterpreterResult::runtime_error("Second operand is not a boolean", self.line())
                   .into(),
               )
             }
             (Value::Bool(_), _) => {
               return Err(
-                InterpretResult::runtime_error("First operand is not a boolean", self.line())
+                InterpreterResult::runtime_error("First operand is not a boolean", self.line())
                   .into(),
               )
             }
             (_, _) => {
               return Err(
-                InterpretResult::runtime_error(
+                InterpreterResult::runtime_error(
                   "Equality operator can only be used with 2 Strings or 2 boolean values",
                   self.line(),
                 )
@@ -191,49 +233,145 @@ impl VM {
           }
         }
         OpCode::NotEqual => {
-          let b = self.pop().as_bool().ok_or_else(|| {
-            InterpretResult::runtime_error("Operand must be a boolean", self.line())
-          })?;
-          let a = self.pop().as_bool().ok_or_else(|| {
-            InterpretResult::runtime_error("Operand must be a boolean", self.line())
-          })?;
+          let b = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?
+            .as_bool()
+            .ok_or_else(|| {
+              InterpreterResult::runtime_error("Operand must be a boolean", self.line())
+            })?;
+          let a = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?
+            .as_bool()
+            .ok_or_else(|| {
+              InterpreterResult::runtime_error("Operand must be a boolean", self.line())
+            })?;
           self.push(Value::Bool(a != b));
         }
         OpCode::Greater => {
-          let b = self.pop().as_bool().ok_or_else(|| {
-            InterpretResult::runtime_error("Operand must be a boolean", self.line())
-          })?;
-          let a = self.pop().as_bool().ok_or_else(|| {
-            InterpretResult::runtime_error("Operand must be a boolean", self.line())
-          })?;
+          let b = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?
+            .as_bool()
+            .ok_or_else(|| {
+              InterpreterResult::runtime_error("Operand must be a boolean", self.line())
+            })?;
+          let a = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?
+            .as_bool()
+            .ok_or_else(|| {
+              InterpreterResult::runtime_error("Operand must be a boolean", self.line())
+            })?;
           self.push(Value::Bool(a > b));
         }
         OpCode::GreaterOrEqual => {
-          let b = self.pop().as_bool().ok_or_else(|| {
-            InterpretResult::runtime_error("Operand must be a boolean", self.line())
-          })?;
-          let a = self.pop().as_bool().ok_or_else(|| {
-            InterpretResult::runtime_error("Operand must be a boolean", self.line())
-          })?;
+          let b = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?
+            .as_bool()
+            .ok_or_else(|| {
+              InterpreterResult::runtime_error("Operand must be a boolean", self.line())
+            })?;
+          let a = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?
+            .as_bool()
+            .ok_or_else(|| {
+              InterpreterResult::runtime_error("Operand must be a boolean", self.line())
+            })?;
           self.push(Value::Bool(a >= b));
         }
         OpCode::Less => {
-          let b = self.pop().as_bool().ok_or_else(|| {
-            InterpretResult::runtime_error("Operand must be a boolean", self.line())
-          })?;
-          let a = self.pop().as_bool().ok_or_else(|| {
-            InterpretResult::runtime_error("Operand must be a boolean", self.line())
-          })?;
+          let b = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?
+            .as_bool()
+            .ok_or_else(|| {
+              InterpreterResult::runtime_error("Operand must be a boolean", self.line())
+            })?;
+          let a = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?
+            .as_bool()
+            .ok_or_else(|| {
+              InterpreterResult::runtime_error("Operand must be a boolean", self.line())
+            })?;
           self.push(Value::Bool(a < b));
         }
         OpCode::LessOrEqual => {
-          let b = self.pop().as_bool().ok_or_else(|| {
-            InterpretResult::runtime_error("Operand must be a boolean", self.line())
-          })?;
-          let a = self.pop().as_bool().ok_or_else(|| {
-            InterpretResult::runtime_error("Operand must be a boolean", self.line())
-          })?;
+          let b = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?
+            .as_bool()
+            .ok_or_else(|| {
+              InterpreterResult::runtime_error("Operand must be a boolean", self.line())
+            })?;
+          let a = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?
+            .as_bool()
+            .ok_or_else(|| {
+              InterpreterResult::runtime_error("Operand must be a boolean", self.line())
+            })?;
           self.push(Value::Bool(a <= b));
+        }
+        OpCode::Print => {
+          println!(
+            "{}",
+            self
+              .pop()
+              .ok_or_else(|| InterpreterResult::no_stack_value())?
+          );
+        }
+        OpCode::Pop => {
+          // We don't care if we pop an empty stack here
+          self.pop();
+        }
+        OpCode::DefineGlobal => {
+          let name = self.read_constant().as_string().ok_or_else(|| {
+            InterpreterResult::runtime_error(
+              "The identifier being used was not a string and is an internal runtime error",
+              self.line(),
+            )
+          })?;
+          let value = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?;
+          self.globals.insert(name, value);
+        }
+        OpCode::GetGlobal => {
+          let name = self.read_constant().as_string().ok_or_else(|| {
+            InterpreterResult::runtime_error(
+              "The identifier being used was not a string and is an internal runtime error",
+              self.line(),
+            )
+          })?;
+          self.push(
+            self
+              .globals
+              .get(&name)
+              .ok_or_else(|| {
+                InterpreterResult::runtime_error(
+                  format!("Undefined variable '{}'", name),
+                  self.line(),
+                )
+              })?
+              .clone(),
+          );
+        }
+        OpCode::SetGlobal => {
+          let name = self.read_constant().as_string().ok_or_else(|| {
+            InterpreterResult::runtime_error(
+              "The identifier being used was not a string and is an internal runtime error",
+              self.line(),
+            )
+          })?;
+          let value = self
+            .pop()
+            .ok_or_else(|| InterpreterResult::no_stack_value())?;
+          self.globals.insert(name, value);
         }
       }
     }
@@ -257,9 +395,13 @@ impl VM {
         _ => (),
       }
     }
+    // There's nothing to collect so return early
+    if self.heap.len() == 0 {
+      return;
+    }
     let old_max_index = self.heap.len() - 1;
     self.heap.retain(|(_, alive)| *alive);
-    let offset = old_max_index - (self.heap.len() - 1);
+    let offset = old_max_index - (self.heap.len().checked_sub(1).unwrap_or(0));
     self.heap.iter_mut().for_each(|(h, alive)| {
       if let Value::Heap(inner) = h {
         *inner = *inner - offset;
@@ -278,25 +420,24 @@ impl VM {
   fn read_instruction(&self) -> OpCode {
     self.chunk.as_ref().unwrap().code[self.ip].into()
   }
-  fn read_constant(&self) -> Value {
-    self.chunk().constants[self.chunk().code[self.ip] as usize].clone()
+  fn read_constant(&mut self) -> Value {
+    let value = self.chunk().constants[self.chunk().code[self.ip] as usize].clone();
+    self.ip += 1;
+    value
   }
   fn push(&mut self, value: Value) {
     self.stack.push(value);
   }
-  fn pop(&mut self) -> Value {
-    let value = self
-      .stack
-      .pop()
-      .expect("VM tried to pop a value off an empty stack");
+  fn pop(&mut self) -> Option<Value> {
+    let value = self.stack.pop()?;
 
     // This could be so so much better but I'm not really stuck
     // on a gc design or inneficiencies yet. Maybe I could use
     // Cow here idk
     if let Value::Heap(h) = value {
-      self.heap[h].0.clone()
+      Some(self.heap[h].0.clone())
     } else {
-      value
+      Some(value)
     }
   }
   fn line(&self) -> usize {
@@ -305,6 +446,16 @@ impl VM {
       .as_ref()
       .map(|c| c.lines[self.ip - 1])
       .unwrap_or(0)
+  }
+  #[allow(dead_code)]
+  pub fn debug(&self) {
+    self.print_globals();
+    self.print_stack();
+    self.print_heap();
+  }
+  #[allow(dead_code)]
+  pub fn print_globals(&self) {
+    println!("--- Globals ---\n{:#?}", self.globals);
   }
   #[allow(dead_code)]
   pub fn print_stack(&self) {
@@ -317,26 +468,31 @@ impl VM {
 }
 
 #[derive(Debug, Clone)]
-pub enum InterpretResult {
-  CompileError,
+pub enum InterpreterResult {
+  CompileError(Cow<'static, str>),
   RuntimeError(Cow<'static, str>, usize),
 }
 
-impl InterpretResult {
+impl InterpreterResult {
   fn runtime_error<M: Into<Cow<'static, str>>>(message: M, line: usize) -> Self {
     Self::RuntimeError(message.into(), line)
   }
+  fn no_stack_value() -> Self {
+    Self::CompileError("Tried to pop a value off an empty stack".into())
+  }
 }
 
-impl fmt::Display for InterpretResult {
+impl fmt::Display for InterpreterResult {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      InterpretResult::CompileError => write!(f, "Compilation error"),
-      InterpretResult::RuntimeError(message, line) => {
+      InterpreterResult::CompileError(message) => {
+        write!(f, "[ICE] Error in compilation: {}", message)
+      }
+      InterpreterResult::RuntimeError(message, line) => {
         write!(f, "[line {}] Error in script: {}", line, message)
       }
     }
   }
 }
 
-impl std::error::Error for InterpretResult {}
+impl std::error::Error for InterpreterResult {}

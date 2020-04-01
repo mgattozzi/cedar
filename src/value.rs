@@ -24,6 +24,13 @@ impl Value {
       None
     }
   }
+  pub fn as_string(self) -> Option<Cow<'static, str>> {
+    if let Value::String(s) = self {
+      Some(s)
+    } else {
+      None
+    }
+  }
 }
 
 impl fmt::Display for Value {
