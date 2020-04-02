@@ -4,12 +4,20 @@ use std::{borrow::Cow, fmt};
 pub enum Value {
   Number(f64),
   Bool(bool),
+  Byte(u8),
   Null,
   String(Cow<'static, str>),
   Heap(usize),
 }
 
 impl Value {
+  pub fn into_byte(self) -> u8 {
+    if let Value::Byte(b) = self {
+      b
+    } else {
+      panic!()
+    }
+  }
   pub fn as_num(self) -> Option<f64> {
     if let Value::Number(n) = self {
       Some(n)
@@ -38,6 +46,7 @@ impl fmt::Display for Value {
     match self {
       Value::Number(n) => write!(f, "{}", n),
       Value::Bool(b) => write!(f, "{}", b),
+      Value::Byte(b) => write!(f, "{}", b),
       Value::Null => write!(f, "null"),
       Value::String(s) => write!(f, "{}", s),
       Value::Heap(h) => write!(f, "heap {}", h),

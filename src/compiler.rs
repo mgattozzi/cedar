@@ -6,6 +6,8 @@ use crate::{
 };
 use std::{borrow::Cow, fmt, iter::Peekable, vec};
 
+const U8_COUNT: isize = std::u8::MAX as isize + 1;
+
 pub fn compile(source: String) -> Result<Chunk, CedarError> {
   let tokens = Scanner::new(source).scan()?;
 
@@ -25,6 +27,8 @@ pub struct TokenIter {
   current: Option<Token>,
   chunk: Chunk,
   rules: [ParseRule; 39],
+  locals: Vec<Local>, // we use U8_COUNT as our hard limit for locals in scope
+  scope_depth: isize,
 }
 
 impl fmt::Debug for TokenIter {
@@ -45,6 +49,8 @@ impl TokenIter {
       previous: None,
       current: None,
       chunk: Chunk::new(),
+      locals: Vec::new(),
+      scope_depth: 0,
       rules: [
         // LeftParen
         ParseRule::new(Some(TokenIter::grouping), None, Precedence::None),
@@ -219,15 +225,22 @@ impl TokenIter {
     }
     Ok(())
   }
-  fn parse_variable(&mut self) -> Result<Cow<'static, str>, CedarError> {
+  fn parse_variable(&mut self) -> Result<Option<Cow<'static, str>>, CedarError> {
     self.consume(TokenType::Identifier, "Expect variable name.")?;
-    Ok(
-      self
-        .previous
-        .clone()
-        .ok_or_else(|| CompilerError::ice("No previous value in let_declaration"))?
-        .lexeme,
-    )
+    self.declare_variable()?;
+    if self.scope_depth > 0 {
+      // Locals are not looked up by name at runtime return None
+      Ok(None)
+    } else {
+      // Globals are looked up by name at runtime return a value
+      Ok(Some(
+        self
+          .previous
+          .clone()
+          .ok_or_else(|| CompilerError::ice("No previous value in let_declaration"))?
+          .lexeme,
+      ))
+    }
   }
   fn emit_byte(&mut self, byte: OpCode, value: Option<Value>) -> Result<(), CedarError> {
     let line = self
@@ -338,30 +351,99 @@ impl TokenIter {
       TokenType::Semicolon,
       "Expect ';' after variable declaration.",
     )?;
-    self.define_variable(global)
+    match global {
+      Some(global) => self.define_variable(global),
+      None => Ok(()),
+    }
+  }
+  fn declare_variable(&mut self) -> Result<(), CedarError> {
+    if self.scope_depth == 0 {
+      // Global variables are implicitly declared
+      return Ok(());
+    }
+    let name = self
+      .previous
+      .clone()
+      .ok_or_else(|| CompilerError::ice("No previous value in declare_variable"))?;
+    for local in self.locals.iter().rev() {
+      let depth = match local.depth {
+        Depth::Initialized(d) => d,
+        Depth::Uninitialized => -1,
+      };
+      if depth != -1 && depth < self.scope_depth {
+        break;
+      }
+      if name.lexeme == local.name.lexeme {
+        return Err(
+          CompilerError::new(&name, "Variable with this name already declared in scope").into(),
+        );
+      }
+    }
+    self.add_local(name)
   }
   fn define_variable(&mut self, global: Cow<'static, str>) -> Result<(), CedarError> {
+    if self.scope_depth > 0 {
+      return Ok(());
+    }
+
     self.emit_byte(OpCode::DefineGlobal, Some(Value::String(global)))
+  }
+  fn add_local(&mut self, name: Token) -> Result<(), CedarError> {
+    if self.locals.len() == U8_COUNT as usize {
+      Err(CompilerError::new(&name, "Too many local variables in function").into())
+    } else {
+      let local = Local::new(name, self.scope_depth);
+      Ok(self.locals.push(local))
+    }
   }
   fn variable(&mut self, can_assign: bool) -> Result<(), CedarError> {
     self.named_variable(can_assign)
   }
   fn named_variable(&mut self, can_assign: bool) -> Result<(), CedarError> {
-    let arg = self
-      .previous
-      .clone()
-      .ok_or_else(|| CompilerError::ice("No previous value in variable"))?
-      .lexeme;
+    let get_op;
+    let set_op;
+    let arg;
+    let name = self.previous.clone().unwrap();
+    let depth = self.resolve_local(&name.lexeme)?;
+    match depth {
+      Depth::Initialized(depth) => {
+        get_op = OpCode::GetLocal;
+        set_op = OpCode::SetLocal;
+        if depth > U8_COUNT {
+          return Err(CompilerError::new(&name, "Too many levels of scoping in function").into());
+        }
+        arg = Some(Value::Byte(depth as u8));
+      }
+      Depth::Uninitialized => {
+        get_op = OpCode::GetGlobal;
+        set_op = OpCode::SetGlobal;
+        arg = Some(Value::String(name.lexeme));
+      }
+    }
     if can_assign && self.match_token(&TokenType::Equal)? {
       self.expression()?;
-      self.emit_byte(OpCode::SetGlobal, Some(Value::String(arg)))
+      self.emit_byte(set_op, arg)
     } else {
-      self.emit_byte(OpCode::GetGlobal, Some(Value::String(arg)))
+      self.emit_byte(get_op, arg)
     }
+  }
+  fn resolve_local(&mut self, name: &str) -> Result<Depth, CedarError> {
+    for (pos, local) in self.locals.iter().rev().enumerate() {
+      if local.name.lexeme == name {
+        return Ok(Depth::Initialized(
+          self.locals.len() as isize - 1 - pos as isize,
+        ));
+      }
+    }
+    Ok(Depth::Uninitialized)
   }
   fn statement(&mut self) -> Result<(), CedarError> {
     if self.match_token(&TokenType::Print)? {
       self.print_statement()
+    } else if self.match_token(&TokenType::LeftBrace)? {
+      self.begin_scope();
+      self.block()?;
+      self.end_scope()
     } else {
       self.expression_statement()
     }
@@ -375,6 +457,33 @@ impl TokenIter {
     self.expression()?;
     self.consume(TokenType::Semicolon, "Expect ';' after value.")?;
     self.emit_byte(OpCode::Pop, None)
+  }
+  fn begin_scope(&mut self) {
+    self.scope_depth += 1;
+  }
+  fn end_scope(&mut self) -> Result<(), CedarError> {
+    self.scope_depth -= 1;
+
+    let mut local_count = self.locals.len();
+    while local_count > 0
+      && match self.locals[local_count - 1].depth {
+        Depth::Initialized(d) => d,
+        // I don't really know what the best thing to do here is
+        Depth::Uninitialized => -1,
+      } > self.scope_depth
+    {
+      self.emit_byte(OpCode::Pop, None)?;
+      self.locals.pop();
+      local_count -= 1;
+    }
+
+    Ok(())
+  }
+  fn block(&mut self) -> Result<(), CedarError> {
+    while !self.check(&TokenType::RightBrace)? && !self.check(&TokenType::EOF)? {
+      self.declaration()?;
+    }
+    self.consume(TokenType::RightBrace, "Expect '}' after block.")
   }
   fn expression(&mut self) -> Result<(), CedarError> {
     self.parse_precedence(Precedence::Assignment)
@@ -433,6 +542,26 @@ impl TokenIter {
   }
 }
 
+#[derive(Debug)]
+pub struct Local {
+  name: Token,
+  depth: Depth,
+}
+
+impl Local {
+  fn new(name: Token, depth: isize) -> Self {
+    Self {
+      name,
+      depth: Depth::Initialized(depth),
+    }
+  }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Depth {
+  Initialized(isize),
+  Uninitialized,
+}
 // Do not under any circumstances change this ordering as the derive is based on
 // the order of the variants, much like a C style enum is just bigger numbers
 // for each variant.

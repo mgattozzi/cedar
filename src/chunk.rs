@@ -25,6 +25,8 @@ pub enum OpCode {
   DefineGlobal,
   GetGlobal,
   SetGlobal,
+  GetLocal,
+  SetLocal,
 }
 impl From<u8> for OpCode {
   fn from(b: u8) -> Self {
@@ -51,6 +53,8 @@ impl From<u8> for OpCode {
       19 => OpCode::DefineGlobal,
       20 => OpCode::GetGlobal,
       21 => OpCode::SetGlobal,
+      22 => OpCode::GetLocal,
+      23 => OpCode::SetLocal,
       _ => panic!("Invalid opcode: {}", b),
     }
   }
@@ -80,6 +84,8 @@ impl From<OpCode> for u8 {
       OpCode::DefineGlobal => 19,
       OpCode::GetGlobal => 20,
       OpCode::SetGlobal => 21,
+      OpCode::GetLocal => 22,
+      OpCode::SetLocal => 23,
     }
   }
 }
@@ -105,10 +111,12 @@ impl fmt::Display for OpCode {
       OpCode::Less => "Less",
       OpCode::LessOrEqual => "LessOrEqual",
       OpCode::Print => "Print",
-      OpCode::Pop => "Print",
+      OpCode::Pop => "Pop",
       OpCode::DefineGlobal => "DefineGlobal",
       OpCode::GetGlobal => "GetGlobal",
       OpCode::SetGlobal => "SetGlobal",
+      OpCode::GetLocal => "GetLocal",
+      OpCode::SetLocal => "SetLocal",
     };
     write!(f, "{}", string)
   }
@@ -170,6 +178,12 @@ impl Chunk {
         value.expect("Global variable ref should have a value"),
         line,
       ),
+      OpCode::GetLocal => {
+        self.add_get_local(value.expect("Local variable ref should have a value"), line)
+      }
+      OpCode::SetLocal => {
+        self.add_set_local(value.expect("Local variable ref should have a value"), line)
+      }
     }
   }
   pub fn write_byte(&mut self, byte: u8) {
@@ -257,6 +271,26 @@ impl Chunk {
     self.lines.push(line);
     Ok(())
   }
+  fn add_get_local(&mut self, value: Value, line: usize) -> Result<(), CedarError> {
+    self.write_byte(OpCode::GetLocal.into());
+    let value = value.into_byte();
+    // TODO: Make this work for indexing better
+    // push twice to keep length for indexing the same
+    self.lines.push(line);
+    self.lines.push(line);
+    // We checked for truncation here
+    Ok(self.write_byte(value as u8))
+  }
+  fn add_set_local(&mut self, value: Value, line: usize) -> Result<(), CedarError> {
+    self.write_byte(OpCode::SetLocal.into());
+    let value = value.into_byte();
+    // TODO: Make this work for indexing better
+    // push twice to keep length for indexing the same
+    self.lines.push(line);
+    self.lines.push(line);
+    // We checked for truncation here
+    Ok(self.write_byte(value as u8))
+  }
   #[allow(dead_code)]
   pub fn disassemble(&self, name: &str) {
     println!("== {} ==", name);
@@ -288,6 +322,7 @@ impl Chunk {
             match &self.constants[*location as usize] {
               Value::Number(n) => println!("'{}'", n),
               Value::Bool(b) => println!("'{}'", b),
+              Value::Byte(b) => println!("'{}'", b),
               Value::String(s) => println!("'{}'", s),
               Value::Heap(h) => println!("'heap {}'", h),
               Value::Null => println!("'null'"),
@@ -300,6 +335,7 @@ impl Chunk {
             match &self.constants[*location as usize] {
               Value::Number(n) => println!("'{}'", n),
               Value::Bool(b) => println!("'{}'", b),
+              Value::Byte(b) => println!("'{}'", b),
               Value::String(s) => println!("'{}'", s),
               Value::Heap(h) => println!("'heap {}'", h),
               Value::Null => println!("'null'"),
@@ -312,6 +348,7 @@ impl Chunk {
             match &self.constants[*location as usize] {
               Value::Number(n) => println!("'{}'", n),
               Value::Bool(b) => println!("'{}'", b),
+              Value::Byte(b) => println!("'{}'", b),
               Value::String(s) => println!("'{}'", s),
               Value::Heap(h) => println!("'heap {}'", h),
               Value::Null => println!("'null'"),
@@ -324,10 +361,21 @@ impl Chunk {
             match &self.constants[*location as usize] {
               Value::Number(n) => println!("'{}'", n),
               Value::Bool(b) => println!("'{}'", b),
+              Value::Byte(b) => println!("'{}'", b),
               Value::String(s) => println!("'{}'", s),
               Value::Heap(h) => println!("'heap {}'", h),
               Value::Null => println!("'null'"),
             }
+          }
+        }
+        OpCode::GetLocal => {
+          if let Some((_, location)) = iterator.next() {
+            println!("{:04} {:4} {}{:12} ", i, self.lines[i], op, location);
+          }
+        }
+        OpCode::SetLocal => {
+          if let Some((_, location)) = iterator.next() {
+            println!("{:04} {:4} {}{:12} ", i, self.lines[i], op, location);
           }
         }
       }
