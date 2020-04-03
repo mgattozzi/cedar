@@ -38,7 +38,6 @@ impl VM {
   }
 
   fn run(&mut self) -> Result<(), CedarError> {
-    //self.debug();
     loop {
       let op = self.read_instruction();
       self.ip += 1;
@@ -157,34 +156,14 @@ impl VM {
           match (b, a) {
             (Value::Bool(b), Value::Bool(a)) => self.push(Value::Bool(a == b)),
             (Value::String(b), Value::String(a)) => self.push(Value::Bool(a == b)),
-            (_, Value::String(_)) => {
-              return Err(
-                InterpreterResult::runtime_error("Second operand is not a String", self.line())
-                  .into(),
-              )
-            }
-            (Value::String(_), _) => {
-              return Err(
-                InterpreterResult::runtime_error("First operand is not a String", self.line())
-                  .into(),
-              )
-            }
-            (_, Value::Bool(_)) => {
-              return Err(
-                InterpreterResult::runtime_error("Second operand is not a boolean", self.line())
-                  .into(),
-              )
-            }
-            (Value::Bool(_), _) => {
-              return Err(
-                InterpreterResult::runtime_error("First operand is not a boolean", self.line())
-                  .into(),
-              )
-            }
+            (Value::Number(b), Value::Number(a)) => self.push(Value::Bool(a == b)),
+            (Value::Null, Value::Null) => self.push(Value::Bool(true)),
+            (_, Value::Null) => self.push(Value::Bool(false)),
+            (Value::Null, _) => self.push(Value::Bool(false)),
             (_, _) => {
               return Err(
                 InterpreterResult::runtime_error(
-                  "Equality operator can only be used with 2 Strings or 2 boolean values",
+                  "Equality operator can only be used with 2 of the same type",
                   self.line(),
                 )
                 .into(),
@@ -193,49 +172,99 @@ impl VM {
           }
         }
         OpCode::NotEqual => {
-          let b = self.pop().as_bool().ok_or_else(|| {
-            InterpreterResult::runtime_error("Operand must be a boolean", self.line())
-          })?;
-          let a = self.pop().as_bool().ok_or_else(|| {
-            InterpreterResult::runtime_error("Operand must be a boolean", self.line())
-          })?;
-          self.push(Value::Bool(a != b));
+          let b = self.pop();
+          let a = self.pop();
+          match (b, a) {
+            (Value::Bool(b), Value::Bool(a)) => self.push(Value::Bool(a != b)),
+            (Value::String(b), Value::String(a)) => self.push(Value::Bool(a != b)),
+            (Value::Number(b), Value::Number(a)) => self.push(Value::Bool(a != b)),
+            (Value::Null, Value::Null) => self.push(Value::Bool(false)),
+            (_, _) => {
+              return Err(
+                InterpreterResult::runtime_error(
+                  "Not equal operator can only be used with 2 of the same type",
+                  self.line(),
+                )
+                .into(),
+              )
+            }
+          }
         }
         OpCode::Greater => {
-          let b = self.pop().as_bool().ok_or_else(|| {
-            InterpreterResult::runtime_error("Operand must be a boolean", self.line())
-          })?;
-          let a = self.pop().as_bool().ok_or_else(|| {
-            InterpreterResult::runtime_error("Operand must be a boolean", self.line())
-          })?;
-          self.push(Value::Bool(a > b));
+          let b = self.pop();
+          let a = self.pop();
+          match (b, a) {
+            (Value::Bool(b), Value::Bool(a)) => self.push(Value::Bool(a > b)),
+            (Value::String(b), Value::String(a)) => self.push(Value::Bool(a > b)),
+            (Value::Number(b), Value::Number(a)) => self.push(Value::Bool(a > b)),
+            (Value::Null, Value::Null) => self.push(Value::Bool(false)),
+            (_, _) => {
+              return Err(
+                InterpreterResult::runtime_error(
+                  "Greater than operator can only be used with 2 of the same type",
+                  self.line(),
+                )
+                .into(),
+              )
+            }
+          }
         }
         OpCode::GreaterOrEqual => {
-          let b = self.pop().as_bool().ok_or_else(|| {
-            InterpreterResult::runtime_error("Operand must be a boolean", self.line())
-          })?;
-          let a = self.pop().as_bool().ok_or_else(|| {
-            InterpreterResult::runtime_error("Operand must be a boolean", self.line())
-          })?;
-          self.push(Value::Bool(a >= b));
+          let b = self.pop();
+          let a = self.pop();
+          match (b, a) {
+            (Value::Bool(b), Value::Bool(a)) => self.push(Value::Bool(a >= b)),
+            (Value::String(b), Value::String(a)) => self.push(Value::Bool(a >= b)),
+            (Value::Number(b), Value::Number(a)) => self.push(Value::Bool(a >= b)),
+            (Value::Null, Value::Null) => self.push(Value::Bool(true)),
+            (_, _) => {
+              return Err(
+                InterpreterResult::runtime_error(
+                  "Greater than or equal operator can only be used with 2 of the same type",
+                  self.line(),
+                )
+                .into(),
+              )
+            }
+          }
         }
         OpCode::Less => {
-          let b = self.pop().as_bool().ok_or_else(|| {
-            InterpreterResult::runtime_error("Operand must be a boolean", self.line())
-          })?;
-          let a = self.pop().as_bool().ok_or_else(|| {
-            InterpreterResult::runtime_error("Operand must be a boolean", self.line())
-          })?;
-          self.push(Value::Bool(a < b));
+          let b = self.pop();
+          let a = self.pop();
+          match (b, a) {
+            (Value::Bool(b), Value::Bool(a)) => self.push(Value::Bool(a < b)),
+            (Value::String(b), Value::String(a)) => self.push(Value::Bool(a < b)),
+            (Value::Number(b), Value::Number(a)) => self.push(Value::Bool(a < b)),
+            (Value::Null, Value::Null) => self.push(Value::Bool(false)),
+            (_, _) => {
+              return Err(
+                InterpreterResult::runtime_error(
+                  "Less than operator can only be used with 2 of the same type",
+                  self.line(),
+                )
+                .into(),
+              )
+            }
+          }
         }
         OpCode::LessOrEqual => {
-          let b = self.pop().as_bool().ok_or_else(|| {
-            InterpreterResult::runtime_error("Operand must be a boolean", self.line())
-          })?;
-          let a = self.pop().as_bool().ok_or_else(|| {
-            InterpreterResult::runtime_error("Operand must be a boolean", self.line())
-          })?;
-          self.push(Value::Bool(a <= b));
+          let b = self.pop();
+          let a = self.pop();
+          match (b, a) {
+            (Value::Bool(b), Value::Bool(a)) => self.push(Value::Bool(a <= b)),
+            (Value::String(b), Value::String(a)) => self.push(Value::Bool(a <= b)),
+            (Value::Number(b), Value::Number(a)) => self.push(Value::Bool(a <= b)),
+            (Value::Null, Value::Null) => self.push(Value::Bool(true)),
+            (_, _) => {
+              return Err(
+                InterpreterResult::runtime_error(
+                  "Less than or equal operator can only be used with 2 of the same type",
+                  self.line(),
+                )
+                .into(),
+              )
+            }
+          }
         }
         OpCode::Print => {
           println!("{}", self.pop());
@@ -280,8 +309,16 @@ impl VM {
               self.line(),
             )
           })?;
-          let value = self.pop();
-          self.globals.insert(name, value);
+          let value = self.peek();
+          if let None = self.globals.insert(name.clone(), value) {
+            return Err(
+              InterpreterResult::runtime_error(
+                format!("Undefined variable '{}'", name),
+                self.line(),
+              )
+              .into(),
+            );
+          }
         }
         OpCode::GetLocal => {
           let slot = self.read_byte() as usize;
@@ -291,6 +328,18 @@ impl VM {
           let slot = self.read_byte() as usize;
           self.stack[slot] = self.peek();
         }
+        OpCode::JumpIfFalse => {
+          let offset = self.read_u16();
+          if self.peek() == Value::Bool(false) {
+            self.ip += offset as usize;
+          }
+        }
+        OpCode::Jump => {
+          self.ip += self.read_u16() as usize;
+        }
+        OpCode::Loop => {
+          self.ip -= self.read_u16() as usize;
+        }
       }
     }
   }
@@ -298,6 +347,12 @@ impl VM {
     let value = self.chunk.as_ref().unwrap().code[self.ip];
     self.ip += 1;
     value
+  }
+  fn read_u16(&mut self) -> u16 {
+    self.ip += 2;
+    let high = self.chunk.as_ref().unwrap().code[self.ip - 2] as u16;
+    let low = self.chunk.as_ref().unwrap().code[self.ip - 1] as u16;
+    (high << 8) | low
   }
   // To do make this not hot garbage
   fn collect_garbage(&mut self) {

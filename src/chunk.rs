@@ -27,6 +27,9 @@ pub enum OpCode {
   SetGlobal,
   GetLocal,
   SetLocal,
+  JumpIfFalse,
+  Jump,
+  Loop,
 }
 impl From<u8> for OpCode {
   fn from(b: u8) -> Self {
@@ -55,6 +58,9 @@ impl From<u8> for OpCode {
       21 => OpCode::SetGlobal,
       22 => OpCode::GetLocal,
       23 => OpCode::SetLocal,
+      24 => OpCode::JumpIfFalse,
+      25 => OpCode::Jump,
+      26 => OpCode::Loop,
       _ => panic!("Invalid opcode: {}", b),
     }
   }
@@ -86,6 +92,9 @@ impl From<OpCode> for u8 {
       OpCode::SetGlobal => 21,
       OpCode::GetLocal => 22,
       OpCode::SetLocal => 23,
+      OpCode::JumpIfFalse => 24,
+      OpCode::Jump => 25,
+      OpCode::Loop => 26,
     }
   }
 }
@@ -117,6 +126,9 @@ impl fmt::Display for OpCode {
       OpCode::SetGlobal => "SetGlobal",
       OpCode::GetLocal => "GetLocal",
       OpCode::SetLocal => "SetLocal",
+      OpCode::JumpIfFalse => "JumpIfFalse",
+      OpCode::Jump => "Jump",
+      OpCode::Loop => "Loop",
     };
     write!(f, "{}", string)
   }
@@ -184,6 +196,8 @@ impl Chunk {
       OpCode::SetLocal => {
         self.add_set_local(value.expect("Local variable ref should have a value"), line)
       }
+      // We handle this bit of code in the compiler itself
+      OpCode::JumpIfFalse | OpCode::Jump | OpCode::Loop => Ok(()),
     }
   }
   pub fn write_byte(&mut self, byte: u8) {
@@ -376,6 +390,28 @@ impl Chunk {
         OpCode::SetLocal => {
           if let Some((_, location)) = iterator.next() {
             println!("{:04} {:4} {}{:12} ", i, self.lines[i], op, location);
+          }
+        }
+        OpCode::JumpIfFalse => {
+          if let (Some((_, location)), Some((_, location2))) = (iterator.next(), iterator.next()) {
+            println!(
+              "{:04} {:4} {}{:9} ",
+              i,
+              self.lines[i],
+              op,
+              ((*location as u16) << 8) | *location2 as u16
+            );
+          }
+        }
+        OpCode::Jump | OpCode::Loop => {
+          if let (Some((_, location)), Some((_, location2))) = (iterator.next(), iterator.next()) {
+            println!(
+              "{:04} {:4} {}{:16} ",
+              i,
+              self.lines[i],
+              op,
+              ((*location as u16) << 8) | *location2 as u16
+            );
           }
         }
       }

@@ -10,15 +10,7 @@ const U8_COUNT: isize = std::u8::MAX as isize + 1;
 
 pub fn compile(source: String) -> Result<Chunk, CedarError> {
   let tokens = Scanner::new(source).scan()?;
-
-  // The input was empty and so we only have an EOF token
-  if tokens.len() == 1 {
-    let mut chunk = Chunk::new();
-    chunk.write_chunk(OpCode::Return.into(), None, 0)?;
-    Ok(chunk)
-  } else {
-    Ok(TokenIter::new(tokens).compile()?)
-  }
+  Ok(TokenIter::new(tokens).compile()?)
 }
 
 pub struct TokenIter {
@@ -101,7 +93,7 @@ impl TokenIter {
         // Number
         ParseRule::new(Some(TokenIter::number), None, Precedence::Factor),
         // And
-        ParseRule::new(None, None, Precedence::None),
+        ParseRule::new(None, Some(TokenIter::and_), Precedence::And),
         // Class
         ParseRule::new(None, None, Precedence::None),
         // Else
@@ -117,7 +109,7 @@ impl TokenIter {
         // Null
         ParseRule::new(Some(TokenIter::literal), None, Precedence::None),
         // Or
-        ParseRule::new(None, None, Precedence::None),
+        ParseRule::new(None, Some(TokenIter::or_), Precedence::Or),
         // Print
         ParseRule::new(None, None, Precedence::None),
         // Return
@@ -388,6 +380,20 @@ impl TokenIter {
 
     self.emit_byte(OpCode::DefineGlobal, Some(Value::String(global)))
   }
+  fn and_(&mut self, _: bool) -> Result<(), CedarError> {
+    let end_jump = self.emit_jump(OpCode::JumpIfFalse)?;
+    self.emit_byte(OpCode::Pop, None)?;
+    self.parse_precedence(Precedence::And)?;
+    self.patch_jump(end_jump)
+  }
+  fn or_(&mut self, _: bool) -> Result<(), CedarError> {
+    let else_jump = self.emit_jump(OpCode::JumpIfFalse)?;
+    let end_jump = self.emit_jump(OpCode::Jump)?;
+    self.patch_jump(else_jump)?;
+    self.emit_byte(OpCode::Pop, None)?;
+    self.parse_precedence(Precedence::Or)?;
+    self.patch_jump(end_jump)
+  }
   fn add_local(&mut self, name: Token) -> Result<(), CedarError> {
     if self.locals.len() == U8_COUNT as usize {
       Err(CompilerError::new(&name, "Too many local variables in function").into())
@@ -440,6 +446,12 @@ impl TokenIter {
   fn statement(&mut self) -> Result<(), CedarError> {
     if self.match_token(&TokenType::Print)? {
       self.print_statement()
+    } else if self.match_token(&TokenType::If)? {
+      self.if_statement()
+    } else if self.match_token(&TokenType::While)? {
+      self.while_statement()
+    } else if self.match_token(&TokenType::For)? {
+      self.for_statement()
     } else if self.match_token(&TokenType::LeftBrace)? {
       self.begin_scope();
       self.block()?;
@@ -452,6 +464,103 @@ impl TokenIter {
     self.expression()?;
     self.consume(TokenType::Semicolon, "Expect ';' after value.")?;
     self.emit_byte(OpCode::Print, None)
+  }
+  fn if_statement(&mut self) -> Result<(), CedarError> {
+    self.expression()?;
+    let then_jump = self.emit_jump(OpCode::JumpIfFalse)?;
+    self.emit_byte(OpCode::Pop, None)?;
+    self.statement()?;
+    let else_jump = self.emit_jump(OpCode::Jump)?;
+    self.patch_jump(then_jump)?;
+    self.emit_byte(OpCode::Pop, None)?;
+    if self.match_token(&TokenType::Else)? {
+      self.statement()?;
+    }
+    self.patch_jump(else_jump)
+  }
+  fn while_statement(&mut self) -> Result<(), CedarError> {
+    let loop_start = self.chunk.code.len();
+    self.expression()?;
+    let exit_jump = self.emit_jump(OpCode::JumpIfFalse)?;
+    self.emit_byte(OpCode::Pop, None)?;
+    self.statement()?;
+    self.emit_loop(loop_start)?;
+    self.patch_jump(exit_jump)?;
+    self.emit_byte(OpCode::Pop, None)
+  }
+  fn for_statement(&mut self) -> Result<(), CedarError> {
+    self.begin_scope();
+    if self.match_token(&TokenType::Semicolon)? {
+      // no initializer
+    } else if self.match_token(&TokenType::Let)? {
+      self.let_declaration()?;
+    } else {
+      self.expression_statement()?;
+    }
+
+    let mut loop_start = self.chunk.code.len();
+    let mut exit_jump = None;
+    if !self.match_token(&TokenType::Semicolon)? {
+      self.expression()?;
+      self.consume(TokenType::Semicolon, "Expect ';' after loop condition.")?;
+      exit_jump = Some(self.emit_jump(OpCode::JumpIfFalse)?);
+      self.emit_byte(OpCode::Pop, None)?;
+    }
+
+    if !self.match_token(&TokenType::LeftBrace)? {
+      let body_jump = self.emit_jump(OpCode::Jump)?;
+      let increment_start = self.chunk.code.len();
+      self.expression()?;
+      self.emit_byte(OpCode::Pop, None)?;
+      self.emit_loop(loop_start)?;
+      loop_start = increment_start;
+      self.patch_jump(body_jump)?;
+    }
+    self.statement()?;
+    self.emit_loop(loop_start)?;
+    if let Some(exit_jump) = exit_jump {
+      self.patch_jump(exit_jump)?;
+      self.emit_byte(OpCode::Pop, None)?;
+    }
+    self.end_scope()
+  }
+  fn emit_loop(&mut self, loop_start: usize) -> Result<(), CedarError> {
+    let chunk = &mut self.chunk;
+    chunk.write_byte(OpCode::Loop.into());
+    let offset = chunk.code.len() - loop_start + 2;
+    if offset > std::u16::MAX as usize {
+      return Err(CompilerError::error("Loop body too large").into());
+    }
+    chunk.write_byte(((offset >> 8) & 0xff) as u8);
+    chunk.write_byte((offset & 0xff) as u8);
+    // For dissasembler
+    chunk.lines.push(0xff);
+    chunk.lines.push(0xff);
+    chunk.lines.push(0xff);
+    Ok(())
+  }
+  fn emit_jump(&mut self, jump: OpCode) -> Result<usize, CedarError> {
+    let chunk = &mut self.chunk;
+    chunk.write_byte(jump.into());
+    chunk.write_byte(0xff);
+    chunk.write_byte(0xff);
+    // For dissasembler
+    chunk.lines.push(0xff);
+    chunk.lines.push(0xff);
+    chunk.lines.push(0xff);
+    Ok(chunk.code.len() - 2)
+  }
+  fn patch_jump(&mut self, offset: usize) -> Result<(), CedarError> {
+    let chunk = &mut self.chunk;
+    let jump = chunk.code.len() - offset - 2;
+
+    if jump > std::u16::MAX as usize {
+      return Err(CompilerError::error("Too much code to jump over.").into());
+    }
+
+    chunk.code[offset] = ((jump >> 8) & 0xff) as u8;
+    chunk.code[offset + 1] = (jump & 0xff) as u8;
+    Ok(())
   }
   fn expression_statement(&mut self) -> Result<(), CedarError> {
     self.expression()?;
@@ -622,6 +731,14 @@ impl CompilerError {
           .into()
         }
       },
+    }
+  }
+  fn error<M>(message: M) -> Self
+  where
+    M: Into<Cow<'static, str>>,
+  {
+    CompilerError::Message {
+      message: format!("[error] Error: {}", message.into()).into(),
     }
   }
   fn failed() -> Self {
