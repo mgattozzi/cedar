@@ -1,7 +1,6 @@
 use crate::{
   chunk::{Chunk, OpCode},
   compiler::compile,
-  native::{my_func, NativeFuncHolder},
   value::{Function, Value},
   CedarError,
 };
@@ -9,7 +8,6 @@ use std::{
   borrow::{Borrow, Cow},
   collections::HashMap,
   fmt,
-  rc::Rc,
 };
 
 pub struct VM {
@@ -22,28 +20,13 @@ pub struct VM {
 
 impl VM {
   pub fn new() -> Self {
-    let mut new = Self {
+    Self {
       frames: Vec::new(),
       frame_count: 0,
       stack: Vec::new(),
       heap: Vec::new(),
-      globals: HashMap::new(),
-    };
-
-    new.define_natives();
-
-    new
-  }
-
-  fn define_natives(&mut self) {
-    let my_func_p: fn(f64, f64) -> f64 = my_func;
-
-    self.globals.insert(
-      "native-fn".into(),
-      Value::NativeFn(NativeFuncHolder {
-        inner: Rc::new(my_func_p),
-      }),
-    );
+      globals: crate::libstd::load(),
+    }
   }
 
   pub fn interpret(&mut self, source: String) -> Result<(), CedarError> {
@@ -403,7 +386,10 @@ impl VM {
           arg_count -= 1;
         }
         let res = func.call(args).ok_or_else(|| {
-          InterpreterResult::runtime_error("Native function call failed", self.line())
+          InterpreterResult::runtime_error(
+            "Native function call returned an invalid value",
+            self.line(),
+          )
         })?;
         self.push(res);
         Ok(())

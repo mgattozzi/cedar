@@ -1,5 +1,6 @@
 pub mod chunk;
 pub mod compiler;
+pub mod libstd;
 pub mod native;
 pub mod scanner;
 pub mod value;

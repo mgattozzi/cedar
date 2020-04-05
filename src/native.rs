@@ -1,4 +1,5 @@
 use crate::value::Value;
+use std::borrow::Cow;
 use std::fmt;
 use std::rc::Rc;
 
@@ -56,8 +57,35 @@ impl NativeType for f64 {
   }
 }
 
-pub fn my_func(x: f64, y: f64) -> f64 {
-  x + y
+impl NativeType for bool {
+  fn to_value(self) -> Value {
+    Value::Bool(self)
+  }
+  fn from_value(value: Value) -> Option<Self> {
+    value.as_bool()
+  }
+}
+
+impl NativeType for Cow<'static, str> {
+  fn to_value(self) -> Value {
+    Value::String(self.into())
+  }
+  fn from_value(value: Value) -> Option<Self> {
+    value.as_string()
+  }
+}
+
+impl NativeType for () {
+  fn to_value(self) -> Value {
+    Value::Null
+  }
+  fn from_value(value: Value) -> Option<Self> {
+    if let Value::Null = value {
+      Some(())
+    } else {
+      None
+    }
+  }
 }
 
 #[derive(Clone)]
