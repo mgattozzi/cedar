@@ -1,14 +1,14 @@
 use crate::{
   chunk::{Chunk, OpCode},
   scanner::{Scanner, Token, TokenType},
-  value::Value,
+  value::{Function, Value},
   CedarError,
 };
-use std::{borrow::Cow, fmt, iter::Peekable, vec};
+use std::{borrow::Cow, fmt, iter::Peekable, mem, vec};
 
 const U8_COUNT: isize = std::u8::MAX as isize + 1;
 
-pub fn compile(source: String) -> Result<Chunk, CedarError> {
+pub fn compile(source: String) -> Result<Function, CedarError> {
   let tokens = Scanner::new(source).scan()?;
   Ok(TokenIter::new(tokens).compile()?)
 }
@@ -17,7 +17,8 @@ pub struct TokenIter {
   iter: Peekable<vec::IntoIter<Token>>,
   previous: Option<Token>,
   current: Option<Token>,
-  chunk: Chunk,
+  function: Function,
+  fn_type: FunctionType,
   rules: [ParseRule; 39],
   locals: Vec<Local>, // we use U8_COUNT as our hard limit for locals in scope
   scope_depth: isize,
@@ -25,7 +26,7 @@ pub struct TokenIter {
 
 impl fmt::Debug for TokenIter {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    self.chunk.disassemble("MAIN");
+    self.chunk_immutable().disassemble("MAIN");
     write!(
       f,
       "Iter: {:#?}\nPrevious: {:#?}\nCurrent: {:#?}\n",
@@ -40,12 +41,24 @@ impl TokenIter {
       iter: tokens.into_iter().peekable(),
       previous: None,
       current: None,
-      chunk: Chunk::new(),
-      locals: Vec::new(),
+      function: Function::new(),
+      fn_type: FunctionType::Script,
+      locals: vec![Local::new(
+        Token {
+          ty: TokenType::Fn,
+          line: 0,
+          lexeme: "".into(),
+        },
+        0, // depth
+      )],
       scope_depth: 0,
       rules: [
         // LeftParen
-        ParseRule::new(Some(TokenIter::grouping), None, Precedence::None),
+        ParseRule::new(
+          Some(TokenIter::grouping),
+          Some(TokenIter::call),
+          Precedence::Call,
+        ),
         // RightParen
         ParseRule::new(None, None, Precedence::None),
         // LeftBrace
@@ -129,7 +142,13 @@ impl TokenIter {
       ],
     }
   }
-  fn compile(mut self) -> Result<Chunk, CedarError> {
+  fn chunk_immutable(&self) -> &Chunk {
+    &self.function.chunk
+  }
+  fn chunk(&mut self) -> &mut Chunk {
+    &mut self.function.chunk
+  }
+  fn compile(mut self) -> Result<Function, CedarError> {
     let mut failed = false;
     self.advance();
     while !self.match_token(&TokenType::EOF)? {
@@ -143,7 +162,7 @@ impl TokenIter {
       Err(CompilerError::failed().into())
     } else {
       self.end_compiler()?;
-      Ok(self.chunk)
+      Ok(self.function)
     }
   }
   fn advance(&mut self) {
@@ -217,7 +236,7 @@ impl TokenIter {
     }
     Ok(())
   }
-  fn parse_variable(&mut self) -> Result<Option<Cow<'static, str>>, CedarError> {
+  fn parse_variable(&mut self) -> Result<Option<Value>, CedarError> {
     self.consume(TokenType::Identifier, "Expect variable name.")?;
     self.declare_variable()?;
     if self.scope_depth > 0 {
@@ -225,13 +244,13 @@ impl TokenIter {
       Ok(None)
     } else {
       // Globals are looked up by name at runtime return a value
-      Ok(Some(
+      Ok(Some(Value::String(
         self
           .previous
           .clone()
           .ok_or_else(|| CompilerError::ice("No previous value in let_declaration"))?
           .lexeme,
-      ))
+      )))
     }
   }
   fn emit_byte(&mut self, byte: OpCode, value: Option<Value>) -> Result<(), CedarError> {
@@ -240,9 +259,10 @@ impl TokenIter {
       .as_ref()
       .map(|p| p.line)
       .ok_or_else(|| CompilerError::ice("No previous value when calling emit_byte"))?;
-    self.chunk.write_chunk(byte.into(), value, line)
+    self.chunk().write_chunk(byte.into(), value, line)
   }
   fn emit_return(&mut self) -> Result<(), CedarError> {
+    self.emit_byte(OpCode::Null, None)?;
     self.emit_byte(OpCode::Return, None)
   }
   fn end_compiler(&mut self) -> Result<(), CedarError> {
@@ -326,11 +346,19 @@ impl TokenIter {
     &self.rules[ty.as_usize()]
   }
   fn declaration(&mut self) -> Result<(), CedarError> {
-    if self.match_token(&TokenType::Let)? {
+    if self.match_token(&TokenType::Fn)? {
+      self.fn_declaration()
+    } else if self.match_token(&TokenType::Let)? {
       self.let_declaration()
     } else {
       self.statement()
     }
+  }
+  fn fn_declaration(&mut self) -> Result<(), CedarError> {
+    let global = self.parse_variable()?;
+    self.mark_initialized();
+    self.function(FunctionType::Function)?;
+    self.define_variable(global)
   }
   fn let_declaration(&mut self) -> Result<(), CedarError> {
     let global = self.parse_variable()?;
@@ -343,10 +371,7 @@ impl TokenIter {
       TokenType::Semicolon,
       "Expect ';' after variable declaration.",
     )?;
-    match global {
-      Some(global) => self.define_variable(global),
-      None => Ok(()),
-    }
+    self.define_variable(global)
   }
   fn declare_variable(&mut self) -> Result<(), CedarError> {
     if self.scope_depth == 0 {
@@ -373,12 +398,35 @@ impl TokenIter {
     }
     self.add_local(name)
   }
-  fn define_variable(&mut self, global: Cow<'static, str>) -> Result<(), CedarError> {
+  fn define_variable(&mut self, global: Option<Value>) -> Result<(), CedarError> {
     if self.scope_depth > 0 {
+      self.mark_initialized();
       return Ok(());
     }
 
-    self.emit_byte(OpCode::DefineGlobal, Some(Value::String(global)))
+    self.emit_byte(OpCode::DefineGlobal, global)
+  }
+  fn mark_initialized(&mut self) {
+    if self.scope_depth == 0 {
+      return;
+    } else {
+      self.locals.iter_mut().last().unwrap().depth = Depth::Initialized(self.scope_depth);
+    }
+  }
+  fn argument_list(&mut self) -> Result<u8, CedarError> {
+    let mut arg_count = 0;
+    if !self.check(&TokenType::RightParen)? {
+      while {
+        self.expression()?;
+        arg_count += 1;
+        if arg_count == 255 {
+          return Err(CompilerError::error("Cannot have more than 255 arguments").into());
+        }
+        self.match_token(&TokenType::Comma)?
+      } {}
+    }
+    self.consume(TokenType::RightParen, "Expect ')' after arguments.")?;
+    Ok(arg_count)
   }
   fn and_(&mut self, _: bool) -> Result<(), CedarError> {
     let end_jump = self.emit_jump(OpCode::JumpIfFalse)?;
@@ -448,6 +496,8 @@ impl TokenIter {
       self.print_statement()
     } else if self.match_token(&TokenType::If)? {
       self.if_statement()
+    } else if self.match_token(&TokenType::Return)? {
+      self.return_statement()
     } else if self.match_token(&TokenType::While)? {
       self.while_statement()
     } else if self.match_token(&TokenType::For)? {
@@ -478,8 +528,20 @@ impl TokenIter {
     }
     self.patch_jump(else_jump)
   }
+  fn return_statement(&mut self) -> Result<(), CedarError> {
+    if self.fn_type == FunctionType::Script {
+      return Err(CompilerError::error("Cannot return from top level code").into());
+    }
+    if self.match_token(&TokenType::Semicolon)? {
+      self.emit_return()
+    } else {
+      self.expression()?;
+      self.consume(TokenType::Semicolon, "Expect ';' after return value.")?;
+      self.emit_byte(OpCode::Return, None)
+    }
+  }
   fn while_statement(&mut self) -> Result<(), CedarError> {
-    let loop_start = self.chunk.code.len();
+    let loop_start = self.chunk().code.len();
     self.expression()?;
     let exit_jump = self.emit_jump(OpCode::JumpIfFalse)?;
     self.emit_byte(OpCode::Pop, None)?;
@@ -498,7 +560,7 @@ impl TokenIter {
       self.expression_statement()?;
     }
 
-    let mut loop_start = self.chunk.code.len();
+    let mut loop_start = self.chunk().code.len();
     let mut exit_jump = None;
     if !self.match_token(&TokenType::Semicolon)? {
       self.expression()?;
@@ -509,7 +571,7 @@ impl TokenIter {
 
     if !self.match_token(&TokenType::LeftBrace)? {
       let body_jump = self.emit_jump(OpCode::Jump)?;
-      let increment_start = self.chunk.code.len();
+      let increment_start = self.chunk().code.len();
       self.expression()?;
       self.emit_byte(OpCode::Pop, None)?;
       self.emit_loop(loop_start)?;
@@ -525,7 +587,7 @@ impl TokenIter {
     self.end_scope()
   }
   fn emit_loop(&mut self, loop_start: usize) -> Result<(), CedarError> {
-    let chunk = &mut self.chunk;
+    let chunk = self.chunk();
     chunk.write_byte(OpCode::Loop.into());
     let offset = chunk.code.len() - loop_start + 2;
     if offset > std::u16::MAX as usize {
@@ -540,7 +602,7 @@ impl TokenIter {
     Ok(())
   }
   fn emit_jump(&mut self, jump: OpCode) -> Result<usize, CedarError> {
-    let chunk = &mut self.chunk;
+    let chunk = self.chunk();
     chunk.write_byte(jump.into());
     chunk.write_byte(0xff);
     chunk.write_byte(0xff);
@@ -551,7 +613,7 @@ impl TokenIter {
     Ok(chunk.code.len() - 2)
   }
   fn patch_jump(&mut self, offset: usize) -> Result<(), CedarError> {
-    let chunk = &mut self.chunk;
+    let chunk = self.chunk();
     let jump = chunk.code.len() - offset - 2;
 
     if jump > std::u16::MAX as usize {
@@ -593,6 +655,52 @@ impl TokenIter {
       self.declaration()?;
     }
     self.consume(TokenType::RightBrace, "Expect '}' after block.")
+  }
+  fn function(&mut self, ty: FunctionType) -> Result<(), CedarError> {
+    let current_ty = self.fn_type;
+    let scope_depth = self.scope_depth;
+    self.scope_depth = 0;
+    self.fn_type = ty;
+    self.locals = Vec::new();
+    let mut function = Function::new();
+    let mut locals = Vec::new();
+    mem::swap(&mut self.function, &mut function);
+    mem::swap(&mut self.locals, &mut locals);
+
+    if self.fn_type != FunctionType::Script {
+      self.function.name = self
+        .previous
+        .as_ref()
+        .expect("No previous value in function")
+        .lexeme
+        .clone();
+    }
+
+    self.begin_scope();
+    self.consume(TokenType::LeftParen, "Expect '(' after function name")?;
+    if !self.check(&TokenType::RightParen)? {
+      while {
+        self.function.arity += 1;
+        if self.function.arity > 255 {
+          CompilerError::error("Cannot have more than 255 parameters");
+        }
+        let variable = self.parse_variable()?;
+        self.define_variable(variable)?;
+        self.match_token(&TokenType::Comma)?
+      } {}
+    }
+    self.consume(TokenType::RightParen, "Expect ')' after parameters")?;
+
+    self.consume(TokenType::LeftBrace, "Expect '{' before function body")?;
+    self.block()?;
+
+    self.end_compiler()?;
+
+    mem::swap(&mut self.function, &mut function);
+    mem::swap(&mut self.locals, &mut locals);
+    self.fn_type = current_ty;
+    self.scope_depth = scope_depth;
+    self.emit_byte(OpCode::Constant, Some(Value::Function(function)))
   }
   fn expression(&mut self) -> Result<(), CedarError> {
     self.parse_precedence(Precedence::Assignment)
@@ -648,6 +756,10 @@ impl TokenIter {
       TokenType::LessEqual => self.emit_byte(OpCode::LessOrEqual, None),
       _ => unreachable!(),
     }
+  }
+  fn call(&mut self, _: bool) -> Result<(), CedarError> {
+    let arg_count = self.argument_list()?;
+    self.emit_byte(OpCode::Call, Some(Value::Byte(arg_count)))
   }
 }
 
@@ -706,6 +818,12 @@ impl ParseRule {
 }
 
 type ParseFn = Option<fn(&mut TokenIter, bool) -> Result<(), CedarError>>;
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum FunctionType {
+  Function,
+  Script,
+}
 
 #[derive(Debug)]
 pub enum CompilerError {

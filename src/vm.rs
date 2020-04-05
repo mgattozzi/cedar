@@ -1,18 +1,20 @@
 use crate::{
   chunk::{Chunk, OpCode},
   compiler::compile,
-  value::Value,
+  native::{my_func, NativeFuncHolder},
+  value::{Function, Value},
   CedarError,
 };
 use std::{
   borrow::{Borrow, Cow},
   collections::HashMap,
   fmt,
+  rc::Rc,
 };
 
 pub struct VM {
-  chunk: Option<Chunk>,
-  ip: usize,
+  frames: Vec<CallFrame>,
+  frame_count: usize,
   stack: Vec<Value>,
   heap: Vec<(Value, bool)>,
   globals: HashMap<Cow<'static, str>, Value>,
@@ -20,32 +22,64 @@ pub struct VM {
 
 impl VM {
   pub fn new() -> Self {
-    Self {
-      chunk: None,
-      ip: 0,
+    let mut new = Self {
+      frames: Vec::new(),
+      frame_count: 0,
       stack: Vec::new(),
       heap: Vec::new(),
       globals: HashMap::new(),
-    }
+    };
+
+    new.define_natives();
+
+    new
+  }
+
+  fn define_natives(&mut self) {
+    let my_func_p: fn(f64, f64) -> f64 = my_func;
+
+    self.globals.insert(
+      "native-fn".into(),
+      Value::NativeFn(NativeFuncHolder {
+        inner: Rc::new(my_func_p),
+      }),
+    );
   }
 
   pub fn interpret(&mut self, source: String) -> Result<(), CedarError> {
-    let chunk = compile(source)?;
-    //chunk.disassemble("MAIN");
-    self.chunk = Some(chunk);
-    self.ip = 0;
+    let function = compile(source)?;
+    //function.chunk.disassemble("MAIN");
+    self.call(function.clone(), 0)?;
+    self.stack.push(Value::Function(function));
     self.run()
+  }
+
+  fn ip(&mut self) -> &mut usize {
+    &mut self.frames[self.frame_count - 1].ip
+  }
+  fn ip_(&self) -> usize {
+    self.frames[self.frame_count - 1].ip
+  }
+  fn slots(&self) -> usize {
+    self.frames[self.frame_count - 1].slots
   }
 
   fn run(&mut self) -> Result<(), CedarError> {
     loop {
       let op = self.read_instruction();
-      self.ip += 1;
+      *self.ip() += 1;
       match op {
         OpCode::Return => {
           // Collect garbage on exit not that it matters much
           self.collect_garbage();
-          return Ok(());
+          let result = self.pop();
+          self.frames.pop();
+          self.frame_count -= 1;
+          if self.frame_count == 0 {
+            self.pop();
+            return Ok(());
+          }
+          self.push(result);
         }
         OpCode::Constant => {
           let constant = self.read_constant();
@@ -322,38 +356,88 @@ impl VM {
         }
         OpCode::GetLocal => {
           let slot = self.read_byte() as usize;
-          self.push(self.stack[slot].clone());
+          self.push(self.stack[slot + self.slots()].clone());
         }
         OpCode::SetLocal => {
-          let slot = self.read_byte() as usize;
+          let slot = self.read_byte() as usize + self.slots();
           self.stack[slot] = self.peek();
         }
         OpCode::JumpIfFalse => {
           let offset = self.read_u16();
           if self.peek() == Value::Bool(false) {
-            self.ip += offset as usize;
+            *self.ip() += offset as usize;
           }
         }
         OpCode::Jump => {
-          self.ip += self.read_u16() as usize;
+          *self.ip() += self.read_u16() as usize;
         }
         OpCode::Loop => {
-          self.ip -= self.read_u16() as usize;
+          *self.ip() -= self.read_u16() as usize;
+        }
+        OpCode::Call => {
+          let arg_count = self.read_byte();
+          let callee = self.peek_n(arg_count as usize);
+          self.call_value(callee, arg_count)?;
         }
       }
     }
   }
   fn read_byte(&mut self) -> u8 {
-    let value = self.chunk.as_ref().unwrap().code[self.ip];
-    self.ip += 1;
+    let value = self.chunk().code[self.ip_()];
+    *self.ip() += 1;
     value
   }
   fn read_u16(&mut self) -> u16 {
-    self.ip += 2;
-    let high = self.chunk.as_ref().unwrap().code[self.ip - 2] as u16;
-    let low = self.chunk.as_ref().unwrap().code[self.ip - 1] as u16;
+    *self.ip() += 2;
+    let high = self.chunk().code[self.ip_() - 2] as u16;
+    let low = self.chunk().code[self.ip_() - 1] as u16;
     (high << 8) | low
   }
+  fn call_value(&mut self, callee: Value, mut arg_count: u8) -> Result<(), CedarError> {
+    match callee {
+      Value::Function(func) => self.call(func, arg_count),
+      Value::NativeFn(func) => {
+        let mut args = Vec::with_capacity(arg_count as usize);
+        while arg_count != 0 {
+          args.push(self.pop());
+          arg_count -= 1;
+        }
+        let res = func.call(args).ok_or_else(|| {
+          InterpreterResult::runtime_error("Native function call failed", self.line())
+        })?;
+        self.push(res);
+        Ok(())
+      }
+      _ => Err(
+        InterpreterResult::runtime_error("Can only call functions and classes", self.line()).into(),
+      ),
+    }
+  }
+  fn call(&mut self, function: Function, arg_count: u8) -> Result<(), CedarError> {
+    if arg_count as usize > function.arity {
+      return Err(
+        InterpreterResult::runtime_error(
+          format!(
+            "Expected {} arguments but got {}",
+            arg_count, function.arity
+          ),
+          self.line(),
+        )
+        .into(),
+      );
+    }
+    self.frame_count += 1;
+    Ok(self.frames.push(CallFrame {
+      ip: 0,
+      slots: if self.stack.len() == 0 {
+        0
+      } else {
+        self.stack.len() - arg_count as usize
+      },
+      function,
+    }))
+  }
+
   // To do make this not hot garbage
   fn collect_garbage(&mut self) {
     for i in &self.stack {
@@ -393,14 +477,14 @@ impl VM {
     });
   }
   fn chunk(&self) -> &Chunk {
-    self.chunk.as_ref().unwrap()
+    &self.frames[self.frame_count - 1].function.chunk
   }
   fn read_instruction(&self) -> OpCode {
-    self.chunk.as_ref().unwrap().code[self.ip].into()
+    self.chunk().code[self.ip_()].into()
   }
   fn read_constant(&mut self) -> Value {
-    let value = self.chunk().constants[self.chunk().code[self.ip] as usize].clone();
-    self.ip += 1;
+    let value = self.chunk().constants[self.chunk().code[self.ip_()] as usize].clone();
+    *self.ip() += 1;
     value
   }
   fn push(&mut self, value: Value) {
@@ -427,12 +511,17 @@ impl VM {
       .map(|v| v.clone())
       .expect("No value to peek on stack")
   }
-  fn line(&self) -> usize {
+  fn peek_n(&mut self, n: usize) -> Value {
     self
-      .chunk
-      .as_ref()
-      .map(|c| c.lines[self.ip - 1])
-      .unwrap_or(0)
+      .stack
+      .iter()
+      .rev()
+      .nth(n)
+      .map(|v| v.clone())
+      .expect("No value to peek on stack")
+  }
+  fn line(&self) -> usize {
+    self.chunk().lines[self.ip_() - 1]
   }
   #[allow(dead_code)]
   pub fn debug(&self) {
@@ -452,6 +541,14 @@ impl VM {
   pub fn print_heap(&self) {
     println!("--- Heap ---\n{:#?}", self.heap);
   }
+}
+
+#[derive(Debug)]
+struct CallFrame {
+  function: Function,
+  ip: usize,
+  // first index in stack it can point too.
+  slots: usize,
 }
 
 #[derive(Debug, Clone)]

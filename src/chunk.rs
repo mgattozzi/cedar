@@ -30,6 +30,7 @@ pub enum OpCode {
   JumpIfFalse,
   Jump,
   Loop,
+  Call,
 }
 impl From<u8> for OpCode {
   fn from(b: u8) -> Self {
@@ -61,6 +62,7 @@ impl From<u8> for OpCode {
       24 => OpCode::JumpIfFalse,
       25 => OpCode::Jump,
       26 => OpCode::Loop,
+      27 => OpCode::Call,
       _ => panic!("Invalid opcode: {}", b),
     }
   }
@@ -95,6 +97,7 @@ impl From<OpCode> for u8 {
       OpCode::JumpIfFalse => 24,
       OpCode::Jump => 25,
       OpCode::Loop => 26,
+      OpCode::Call => 27,
     }
   }
 }
@@ -129,6 +132,7 @@ impl fmt::Display for OpCode {
       OpCode::JumpIfFalse => "JumpIfFalse",
       OpCode::Jump => "Jump",
       OpCode::Loop => "Loop",
+      OpCode::Call => "Call",
     };
     write!(f, "{}", string)
   }
@@ -196,6 +200,7 @@ impl Chunk {
       OpCode::SetLocal => {
         self.add_set_local(value.expect("Local variable ref should have a value"), line)
       }
+      OpCode::Call => self.add_call(value.expect("Call variable ref should have a value"), line),
       // We handle this bit of code in the compiler itself
       OpCode::JumpIfFalse | OpCode::Jump | OpCode::Loop => Ok(()),
     }
@@ -211,6 +216,15 @@ impl Chunk {
     }
     self.write_byte(OpCode::Constant.into());
     self.write_byte((self.constants.len() - 1) as u8);
+    // TODO: Make this work for indexing better
+    // push twice to keep length for indexing the same
+    self.lines.push(line);
+    self.lines.push(line);
+    Ok(())
+  }
+  fn add_call(&mut self, value: Value, line: usize) -> Result<(), CedarError> {
+    self.write_byte(OpCode::Call.into());
+    self.write_byte(value.into_byte());
     // TODO: Make this work for indexing better
     // push twice to keep length for indexing the same
     self.lines.push(line);
@@ -329,86 +343,29 @@ impl Chunk {
         | OpCode::LessOrEqual
         | OpCode::Print
         | OpCode::Pop
-        | OpCode::True => println!("{:04} {:4} {}", i, self.lines[i], op),
-        OpCode::Constant => {
+        | OpCode::True => println!("{:04} {:4}", i, op),
+        OpCode::GetGlobal
+        | OpCode::SetGlobal
+        | OpCode::DefineGlobal
+        | OpCode::GetLocal
+        | OpCode::SetLocal
+        | OpCode::Constant => {
+          print!("{:04} {:4} ", i, op);
           if let Some((_, location)) = iterator.next() {
-            print!("{:04} {:4} {}{:12} ", i, self.lines[i], op, location);
-            match &self.constants[*location as usize] {
-              Value::Number(n) => println!("'{}'", n),
-              Value::Bool(b) => println!("'{}'", b),
-              Value::Byte(b) => println!("'{}'", b),
-              Value::String(s) => println!("'{}'", s),
-              Value::Heap(h) => println!("'heap {}'", h),
-              Value::Null => println!("'null'"),
-            }
+            println!("{}", &self.constants[*location as usize]);
           }
         }
-        OpCode::DefineGlobal => {
+        OpCode::Call => {
+          print!("{:04} {:4} ", i, op);
           if let Some((_, location)) = iterator.next() {
-            print!("{:04} {:4} {}{:8} ", i, self.lines[i], op, location);
-            match &self.constants[*location as usize] {
-              Value::Number(n) => println!("'{}'", n),
-              Value::Bool(b) => println!("'{}'", b),
-              Value::Byte(b) => println!("'{}'", b),
-              Value::String(s) => println!("'{}'", s),
-              Value::Heap(h) => println!("'heap {}'", h),
-              Value::Null => println!("'null'"),
-            }
+            println!("{}", location);
           }
         }
-        OpCode::GetGlobal => {
-          if let Some((_, location)) = iterator.next() {
-            print!("{:04} {:4} {}{:11} ", i, self.lines[i], op, location);
-            match &self.constants[*location as usize] {
-              Value::Number(n) => println!("'{}'", n),
-              Value::Bool(b) => println!("'{}'", b),
-              Value::Byte(b) => println!("'{}'", b),
-              Value::String(s) => println!("'{}'", s),
-              Value::Heap(h) => println!("'heap {}'", h),
-              Value::Null => println!("'null'"),
-            }
-          }
-        }
-        OpCode::SetGlobal => {
-          if let Some((_, location)) = iterator.next() {
-            print!("{:04} {:4} {}{:11} ", i, self.lines[i], op, location);
-            match &self.constants[*location as usize] {
-              Value::Number(n) => println!("'{}'", n),
-              Value::Bool(b) => println!("'{}'", b),
-              Value::Byte(b) => println!("'{}'", b),
-              Value::String(s) => println!("'{}'", s),
-              Value::Heap(h) => println!("'heap {}'", h),
-              Value::Null => println!("'null'"),
-            }
-          }
-        }
-        OpCode::GetLocal => {
-          if let Some((_, location)) = iterator.next() {
-            println!("{:04} {:4} {}{:12} ", i, self.lines[i], op, location);
-          }
-        }
-        OpCode::SetLocal => {
-          if let Some((_, location)) = iterator.next() {
-            println!("{:04} {:4} {}{:12} ", i, self.lines[i], op, location);
-          }
-        }
-        OpCode::JumpIfFalse => {
+        OpCode::Jump | OpCode::Loop | OpCode::JumpIfFalse => {
           if let (Some((_, location)), Some((_, location2))) = (iterator.next(), iterator.next()) {
             println!(
-              "{:04} {:4} {}{:9} ",
+              "{:04} {:4} {}",
               i,
-              self.lines[i],
-              op,
-              ((*location as u16) << 8) | *location2 as u16
-            );
-          }
-        }
-        OpCode::Jump | OpCode::Loop => {
-          if let (Some((_, location)), Some((_, location2))) = (iterator.next(), iterator.next()) {
-            println!(
-              "{:04} {:4} {}{:16} ",
-              i,
-              self.lines[i],
               op,
               ((*location as u16) << 8) | *location2 as u16
             );
