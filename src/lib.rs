@@ -6,77 +6,11 @@ pub mod scanner;
 pub mod value;
 pub mod vm;
 
-use chunk::ChunkError;
-use compiler::CompilerError;
+pub use chunk::ChunkError;
+pub use compiler::CompilerError;
 use scanner::ScannerError;
-use std::{
-  env, fmt, fs,
-  io::{self, Write},
-  num::ParseFloatError,
-  path::PathBuf,
-  process::exit,
-};
-use vm::{InterpreterResult, VM};
-
-pub fn main() {
-  let mut args = env::args();
-  let res = if args.len() > 2 {
-    println!("Usage: cedar [script]");
-    exit(64);
-  } else if let Some(arg) = args.nth(1) {
-    run_file(arg.into())
-  } else {
-    repl()
-  };
-
-  if let Err(e) = res {
-    match e {
-      CedarError::CompilerError(c) => match c {
-        CompilerError::Failed => exit(64),
-        _ => unreachable!(),
-      },
-      CedarError::InterpreterResult(i) => match i {
-        InterpreterResult::CompileError(_) => {
-          eprintln!("{}", i);
-          exit(65);
-        }
-        InterpreterResult::RuntimeError(_, _) => {
-          eprintln!("{}", i);
-          exit(70);
-        }
-      },
-      _ => {
-        eprintln!("{}", e);
-        exit(64);
-      }
-    }
-  }
-}
-
-fn run_file(path: PathBuf) -> Result<(), CedarError> {
-  let mut vm = VM::new();
-  run(&mut vm, fs::read_to_string(&path)?)
-}
-
-fn repl() -> Result<(), CedarError> {
-  let stdin = io::stdin();
-  let mut stdout = io::stdout();
-  let mut vm = VM::new();
-  loop {
-    print!("> ");
-    stdout.flush()?;
-    let mut line = String::new();
-    stdin.read_line(&mut line)?;
-    stdout.flush()?;
-    if let Err(e) = run(&mut vm, line) {
-      eprintln!("{}", e);
-    }
-  }
-}
-
-fn run(vm: &mut VM, source: String) -> Result<(), CedarError> {
-  vm.interpret(source)
-}
+use std::{fmt, io, num::ParseFloatError};
+pub use vm::{InterpreterResult, VM};
 
 #[derive(Debug)]
 pub enum CedarError {

@@ -15,6 +15,7 @@ name = "cedarc"
 path = "src/main.rs"
 
 [dependencies]
+rustyline = "6.1"
 
 [dev-dependencies]
 pretty_assertions = "0.6"

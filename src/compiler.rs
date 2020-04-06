@@ -9,7 +9,16 @@ use std::{borrow::Cow, fmt, iter::Peekable, mem, vec};
 const U8_COUNT: isize = std::u8::MAX as isize + 1;
 
 pub fn compile(source: String) -> Result<Function, CedarError> {
-  let tokens = Scanner::new(source).scan()?;
+  let mut tokens = Scanner::new(source).scan()?;
+
+  // This means we are parsing lines from the repl and need to add an EOF token
+  if !tokens.iter().any(|token| token.ty == TokenType::EOF) {
+    tokens.push(Token {
+      ty: TokenType::EOF,
+      line: 1,
+      lexeme: "".into(),
+    });
+  }
   Ok(TokenIter::new(tokens).compile()?)
 }
 
