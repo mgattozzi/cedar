@@ -1,0 +1,3 @@
+write-file("Testing writes", "test-file");
+let content = read-file("test-file");
+print content;

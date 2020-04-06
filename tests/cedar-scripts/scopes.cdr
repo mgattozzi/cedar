@@ -1,0 +1,16 @@
+let a = "global";
+{
+  let a = 0;
+  {
+    let b = 1;
+    {
+      let c = 2;
+      b = 3;
+      print b;
+      print c;
+    }
+    print b;
+  }
+  print a;
+}
+print a;

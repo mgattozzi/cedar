@@ -1,0 +1,20 @@
+print "Hello";
+fn test() {
+  print "It works!";
+}
+
+test();
+
+fn testing(a, b, c) {
+  print "a^2 + b^2 = c^2 is";
+  print (((a * a) + (b * b)) == (c * c));
+}
+
+testing(3, 4, 5);
+
+fn foo(me) {
+  print "Look at " + me + " I am the captain now";
+  return true;
+}
+
+print foo("ME");

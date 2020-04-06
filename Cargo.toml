@@ -19,3 +19,4 @@ rustyline = "6.1"
 
 [dev-dependencies]
 pretty_assertions = "0.6"
+assert_cmd = "1.0"

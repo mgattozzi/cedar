@@ -1,0 +1,48 @@
+// Madoka's mom best mom
+let a = 3;
+if a == 2 {
+  print "You need to learn how to make mistakes before you grow up. When you are young, you can recover quickly when hurt.";
+} else {
+  print "When you get older it's harder to make mistakes, as you get more responsibilities the less mistakes you are allowed to make.";
+}
+
+if a < 10 {
+  print "Being an adult is hard for everybody. That's what alcohol is for.";
+}
+
+if true or false {
+  print "That looks pretty good. Now all your secret admirers won't be able to resist you.
+--Like I'd have any.
+You have to think you do. That's the secret to being pretty.";
+}
+
+if false or true {
+  print "You're gonna carry that weight.";
+}
+
+if false or false {
+  print "Unreachable";
+}
+
+if true and true {
+  print "Don't believe in yourself. Believe in me! Believe in the Kamina who believes in you!";
+}
+if true and false {
+  print "Unreachable";
+}
+if false and true {
+  print "Unreachable";
+}
+if false and false {
+  print "Unreachable";
+}
+
+while a > 0 {
+  print "Alright";
+  a = a - 1;
+}
+
+for let x = 13; x > 0; x = x - 1 {
+  print "Alright";
+}
+print "Owari da";
