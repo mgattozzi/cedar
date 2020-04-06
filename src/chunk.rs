@@ -138,7 +138,7 @@ impl fmt::Display for OpCode {
   }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Default, Debug, Clone, PartialEq)]
 pub struct Chunk {
   pub code: Vec<u8>,
   pub constants: Vec<Value>,
@@ -307,7 +307,8 @@ impl Chunk {
     self.lines.push(line);
     self.lines.push(line);
     // We checked for truncation here
-    Ok(self.write_byte(value as u8))
+    self.write_byte(value as u8);
+    Ok(())
   }
   fn add_set_local(&mut self, value: Value, line: usize) -> Result<(), CedarError> {
     self.write_byte(OpCode::SetLocal.into());
@@ -317,7 +318,8 @@ impl Chunk {
     self.lines.push(line);
     self.lines.push(line);
     // We checked for truncation here
-    Ok(self.write_byte(value as u8))
+    self.write_byte(value as u8);
+    Ok(())
   }
   #[allow(dead_code)]
   pub fn disassemble(&self, name: &str) {

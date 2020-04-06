@@ -19,11 +19,11 @@ use std::{
 use vm::{InterpreterResult, VM};
 
 pub fn main() {
-  let args = env::args();
+  let mut args = env::args();
   let res = if args.len() > 2 {
     println!("Usage: cedar [script]");
     exit(64);
-  } else if let Some(arg) = args.skip(1).next() {
+  } else if let Some(arg) = args.nth(1) {
     run_file(arg.into())
   } else {
     repl()

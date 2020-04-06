@@ -53,7 +53,7 @@ impl NativeType for f64 {
     Value::Number(self)
   }
   fn from_value(value: Value) -> Option<Self> {
-    value.as_num()
+    value.into_num()
   }
 }
 
@@ -62,16 +62,16 @@ impl NativeType for bool {
     Value::Bool(self)
   }
   fn from_value(value: Value) -> Option<Self> {
-    value.as_bool()
+    value.into_bool()
   }
 }
 
 impl NativeType for Cow<'static, str> {
   fn to_value(self) -> Value {
-    Value::String(self.into())
+    Value::String(self)
   }
   fn from_value(value: Value) -> Option<Self> {
-    value.as_string()
+    value.into_string()
   }
 }
 

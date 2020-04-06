@@ -151,7 +151,7 @@ impl TokenIter {
   fn compile(mut self) -> Result<Function, CedarError> {
     let mut failed = false;
     self.advance();
-    while !self.match_token(&TokenType::EOF)? {
+    while !self.match_token(TokenType::EOF)? {
       if let Err(e) = self.declaration() {
         failed = true;
         eprintln!("{}", e);
@@ -188,7 +188,7 @@ impl TokenIter {
       Err(CompilerError::new(self.current.as_ref().unwrap(), message).into())
     }
   }
-  fn match_token(&mut self, ty: &TokenType) -> Result<bool, CedarError> {
+  fn match_token(&mut self, ty: TokenType) -> Result<bool, CedarError> {
     if !self.check(ty)? {
       Ok(false)
     } else {
@@ -196,18 +196,18 @@ impl TokenIter {
       Ok(true)
     }
   }
-  fn check(&mut self, ty: &TokenType) -> Result<bool, CedarError> {
+  fn check(&mut self, ty: TokenType) -> Result<bool, CedarError> {
     Ok(
       self
         .current
         .as_ref()
         .ok_or_else(|| CompilerError::ice("No current value while in check function"))?
         .ty
-        == *ty,
+        == ty,
     )
   }
   fn synchronize(&mut self) -> Result<(), CedarError> {
-    while !self.check(&TokenType::EOF)? {
+    while !self.check(TokenType::EOF)? {
       if self
         .previous
         .as_ref()
@@ -259,7 +259,7 @@ impl TokenIter {
       .as_ref()
       .map(|p| p.line)
       .ok_or_else(|| CompilerError::ice("No previous value when calling emit_byte"))?;
-    self.chunk().write_chunk(byte.into(), value, line)
+    self.chunk().write_chunk(byte, value, line)
   }
   fn emit_return(&mut self) -> Result<(), CedarError> {
     self.emit_byte(OpCode::Null, None)?;
@@ -336,7 +336,7 @@ impl TokenIter {
       }
     }
 
-    if can_assign && self.match_token(&TokenType::Equal)? {
+    if can_assign && self.match_token(TokenType::Equal)? {
       Err(CompilerError::new(&self.previous.as_ref().unwrap(), "Expected infix function").into())
     } else {
       Ok(())
@@ -346,9 +346,9 @@ impl TokenIter {
     &self.rules[ty.as_usize()]
   }
   fn declaration(&mut self) -> Result<(), CedarError> {
-    if self.match_token(&TokenType::Fn)? {
+    if self.match_token(TokenType::Fn)? {
       self.fn_declaration()
-    } else if self.match_token(&TokenType::Let)? {
+    } else if self.match_token(TokenType::Let)? {
       self.let_declaration()
     } else {
       self.statement()
@@ -362,7 +362,7 @@ impl TokenIter {
   }
   fn let_declaration(&mut self) -> Result<(), CedarError> {
     let global = self.parse_variable()?;
-    if self.match_token(&TokenType::Equal)? {
+    if self.match_token(TokenType::Equal)? {
       self.expression()?;
     } else {
       self.emit_byte(OpCode::Null, None)?;
@@ -407,22 +407,20 @@ impl TokenIter {
     self.emit_byte(OpCode::DefineGlobal, global)
   }
   fn mark_initialized(&mut self) {
-    if self.scope_depth == 0 {
-      return;
-    } else {
+    if self.scope_depth != 0 {
       self.locals.iter_mut().last().unwrap().depth = Depth::Initialized(self.scope_depth);
     }
   }
   fn argument_list(&mut self) -> Result<u8, CedarError> {
     let mut arg_count = 0;
-    if !self.check(&TokenType::RightParen)? {
+    if !self.check(TokenType::RightParen)? {
       while {
         self.expression()?;
         arg_count += 1;
         if arg_count == 255 {
           return Err(CompilerError::error("Cannot have more than 255 arguments").into());
         }
-        self.match_token(&TokenType::Comma)?
+        self.match_token(TokenType::Comma)?
       } {}
     }
     self.consume(TokenType::RightParen, "Expect ')' after arguments.")?;
@@ -447,7 +445,8 @@ impl TokenIter {
       Err(CompilerError::new(&name, "Too many local variables in function").into())
     } else {
       let local = Local::new(name, self.scope_depth);
-      Ok(self.locals.push(local))
+      self.locals.push(local);
+      Ok(())
     }
   }
   fn variable(&mut self, can_assign: bool) -> Result<(), CedarError> {
@@ -474,7 +473,7 @@ impl TokenIter {
         arg = Some(Value::String(name.lexeme));
       }
     }
-    if can_assign && self.match_token(&TokenType::Equal)? {
+    if can_assign && self.match_token(TokenType::Equal)? {
       self.expression()?;
       self.emit_byte(set_op, arg)
     } else {
@@ -492,17 +491,17 @@ impl TokenIter {
     Ok(Depth::Uninitialized)
   }
   fn statement(&mut self) -> Result<(), CedarError> {
-    if self.match_token(&TokenType::Print)? {
+    if self.match_token(TokenType::Print)? {
       self.print_statement()
-    } else if self.match_token(&TokenType::If)? {
+    } else if self.match_token(TokenType::If)? {
       self.if_statement()
-    } else if self.match_token(&TokenType::Return)? {
+    } else if self.match_token(TokenType::Return)? {
       self.return_statement()
-    } else if self.match_token(&TokenType::While)? {
+    } else if self.match_token(TokenType::While)? {
       self.while_statement()
-    } else if self.match_token(&TokenType::For)? {
+    } else if self.match_token(TokenType::For)? {
       self.for_statement()
-    } else if self.match_token(&TokenType::LeftBrace)? {
+    } else if self.match_token(TokenType::LeftBrace)? {
       self.begin_scope();
       self.block()?;
       self.end_scope()
@@ -523,7 +522,7 @@ impl TokenIter {
     let else_jump = self.emit_jump(OpCode::Jump)?;
     self.patch_jump(then_jump)?;
     self.emit_byte(OpCode::Pop, None)?;
-    if self.match_token(&TokenType::Else)? {
+    if self.match_token(TokenType::Else)? {
       self.statement()?;
     }
     self.patch_jump(else_jump)
@@ -532,7 +531,7 @@ impl TokenIter {
     if self.fn_type == FunctionType::Script {
       return Err(CompilerError::error("Cannot return from top level code").into());
     }
-    if self.match_token(&TokenType::Semicolon)? {
+    if self.match_token(TokenType::Semicolon)? {
       self.emit_return()
     } else {
       self.expression()?;
@@ -552,9 +551,9 @@ impl TokenIter {
   }
   fn for_statement(&mut self) -> Result<(), CedarError> {
     self.begin_scope();
-    if self.match_token(&TokenType::Semicolon)? {
+    if self.match_token(TokenType::Semicolon)? {
       // no initializer
-    } else if self.match_token(&TokenType::Let)? {
+    } else if self.match_token(TokenType::Let)? {
       self.let_declaration()?;
     } else {
       self.expression_statement()?;
@@ -562,14 +561,14 @@ impl TokenIter {
 
     let mut loop_start = self.chunk().code.len();
     let mut exit_jump = None;
-    if !self.match_token(&TokenType::Semicolon)? {
+    if !self.match_token(TokenType::Semicolon)? {
       self.expression()?;
       self.consume(TokenType::Semicolon, "Expect ';' after loop condition.")?;
       exit_jump = Some(self.emit_jump(OpCode::JumpIfFalse)?);
       self.emit_byte(OpCode::Pop, None)?;
     }
 
-    if !self.match_token(&TokenType::LeftBrace)? {
+    if !self.match_token(TokenType::LeftBrace)? {
       let body_jump = self.emit_jump(OpCode::Jump)?;
       let increment_start = self.chunk().code.len();
       self.expression()?;
@@ -651,7 +650,7 @@ impl TokenIter {
     Ok(())
   }
   fn block(&mut self) -> Result<(), CedarError> {
-    while !self.check(&TokenType::RightBrace)? && !self.check(&TokenType::EOF)? {
+    while !self.check(TokenType::RightBrace)? && !self.check(TokenType::EOF)? {
       self.declaration()?;
     }
     self.consume(TokenType::RightBrace, "Expect '}' after block.")
@@ -678,7 +677,7 @@ impl TokenIter {
 
     self.begin_scope();
     self.consume(TokenType::LeftParen, "Expect '(' after function name")?;
-    if !self.check(&TokenType::RightParen)? {
+    if !self.check(TokenType::RightParen)? {
       while {
         self.function.arity += 1;
         if self.function.arity > 255 {
@@ -686,7 +685,7 @@ impl TokenIter {
         }
         let variable = self.parse_variable()?;
         self.define_variable(variable)?;
-        self.match_token(&TokenType::Comma)?
+        self.match_token(TokenType::Comma)?
       } {}
     }
     self.consume(TokenType::RightParen, "Expect ')' after parameters")?;

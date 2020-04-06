@@ -21,28 +21,28 @@ impl Value {
       panic!()
     }
   }
-  pub fn as_num(self) -> Option<f64> {
+  pub fn into_num(self) -> Option<f64> {
     if let Value::Number(n) = self {
       Some(n)
     } else {
       None
     }
   }
-  pub fn as_bool(self) -> Option<bool> {
+  pub fn into_bool(self) -> Option<bool> {
     if let Value::Bool(b) = self {
       Some(b)
     } else {
       None
     }
   }
-  pub fn as_string(self) -> Option<Cow<'static, str>> {
+  pub fn into_string(self) -> Option<Cow<'static, str>> {
     if let Value::String(s) = self {
       Some(s)
     } else {
       None
     }
   }
-  pub fn as_function(self) -> Option<Function> {
+  pub fn into_function(self) -> Option<Function> {
     if let Value::Function(f) = self {
       Some(f)
     } else {
@@ -65,7 +65,7 @@ impl fmt::Display for Value {
     }
   }
 }
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Default, Debug, Clone, PartialEq)]
 pub struct Function {
   pub arity: usize,
   pub chunk: Chunk,

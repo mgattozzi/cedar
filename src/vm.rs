@@ -7,9 +7,10 @@ use crate::{
 use std::{
   borrow::{Borrow, Cow},
   collections::HashMap,
-  fmt,
+  f64, fmt,
 };
 
+#[derive(Default)]
 pub struct VM {
   frames: Vec<CallFrame>,
   frame_count: usize,
@@ -69,7 +70,7 @@ impl VM {
           self.push(constant);
         }
         OpCode::Negate => {
-          let n = -self.pop().as_num().ok_or_else(|| {
+          let n = -self.pop().into_num().ok_or_else(|| {
             InterpreterResult::runtime_error("Operand must be a number", self.line())
           })?;
           self.push(Value::Number(n));
@@ -126,28 +127,28 @@ impl VM {
           }
         }
         OpCode::Subtract => {
-          let b = self.pop().as_num().ok_or_else(|| {
+          let b = self.pop().into_num().ok_or_else(|| {
             InterpreterResult::runtime_error("Operand must be a number", self.line())
           })?;
-          let a = self.pop().as_num().ok_or_else(|| {
+          let a = self.pop().into_num().ok_or_else(|| {
             InterpreterResult::runtime_error("Operand must be a number", self.line())
           })?;
           self.push(Value::Number(a - b));
         }
         OpCode::Multiply => {
-          let b = self.pop().as_num().ok_or_else(|| {
+          let b = self.pop().into_num().ok_or_else(|| {
             InterpreterResult::runtime_error("Operand must be a number", self.line())
           })?;
-          let a = self.pop().as_num().ok_or_else(|| {
+          let a = self.pop().into_num().ok_or_else(|| {
             InterpreterResult::runtime_error("Operand must be a number", self.line())
           })?;
           self.push(Value::Number(a * b));
         }
         OpCode::Divide => {
-          let b = self.pop().as_num().ok_or_else(|| {
+          let b = self.pop().into_num().ok_or_else(|| {
             InterpreterResult::runtime_error("Operand must be a number", self.line())
           })?;
-          let a = self.pop().as_num().ok_or_else(|| {
+          let a = self.pop().into_num().ok_or_else(|| {
             InterpreterResult::runtime_error("Operand must be a number", self.line())
           })?;
           self.push(Value::Number(a / b));
@@ -162,7 +163,7 @@ impl VM {
           self.push(Value::Null);
         }
         OpCode::Not => {
-          let boolean = self.pop().as_bool().ok_or_else(|| {
+          let boolean = self.pop().into_bool().ok_or_else(|| {
             InterpreterResult::runtime_error("Operand must be a boolean", self.line())
           })?;
           self.push(Value::Bool(!boolean));
@@ -173,7 +174,9 @@ impl VM {
           match (b, a) {
             (Value::Bool(b), Value::Bool(a)) => self.push(Value::Bool(a == b)),
             (Value::String(b), Value::String(a)) => self.push(Value::Bool(a == b)),
-            (Value::Number(b), Value::Number(a)) => self.push(Value::Bool(a == b)),
+            (Value::Number(b), Value::Number(a)) => {
+              self.push(Value::Bool((a - b).abs() < f64::EPSILON))
+            }
             (Value::Null, Value::Null) => self.push(Value::Bool(true)),
             (_, Value::Null) => self.push(Value::Bool(false)),
             (Value::Null, _) => self.push(Value::Bool(false)),
@@ -194,7 +197,9 @@ impl VM {
           match (b, a) {
             (Value::Bool(b), Value::Bool(a)) => self.push(Value::Bool(a != b)),
             (Value::String(b), Value::String(a)) => self.push(Value::Bool(a != b)),
-            (Value::Number(b), Value::Number(a)) => self.push(Value::Bool(a != b)),
+            (Value::Number(b), Value::Number(a)) => {
+              self.push(Value::Bool((a - b).abs() > f64::EPSILON))
+            }
             (Value::Null, Value::Null) => self.push(Value::Bool(false)),
             (_, _) => {
               return Err(
@@ -211,7 +216,7 @@ impl VM {
           let b = self.pop();
           let a = self.pop();
           match (b, a) {
-            (Value::Bool(b), Value::Bool(a)) => self.push(Value::Bool(a > b)),
+            (Value::Bool(b), Value::Bool(a)) => self.push(Value::Bool(a & !b)),
             (Value::String(b), Value::String(a)) => self.push(Value::Bool(a > b)),
             (Value::Number(b), Value::Number(a)) => self.push(Value::Bool(a > b)),
             (Value::Null, Value::Null) => self.push(Value::Bool(false)),
@@ -249,7 +254,7 @@ impl VM {
           let b = self.pop();
           let a = self.pop();
           match (b, a) {
-            (Value::Bool(b), Value::Bool(a)) => self.push(Value::Bool(a < b)),
+            (Value::Bool(b), Value::Bool(a)) => self.push(Value::Bool(!a & b)),
             (Value::String(b), Value::String(a)) => self.push(Value::Bool(a < b)),
             (Value::Number(b), Value::Number(a)) => self.push(Value::Bool(a < b)),
             (Value::Null, Value::Null) => self.push(Value::Bool(false)),
@@ -290,7 +295,7 @@ impl VM {
           self.pop();
         }
         OpCode::DefineGlobal => {
-          let name = self.read_constant().as_string().ok_or_else(|| {
+          let name = self.read_constant().into_string().ok_or_else(|| {
             InterpreterResult::runtime_error(
               "The identifier being used was not a string and is an internal runtime error",
               self.line(),
@@ -300,7 +305,7 @@ impl VM {
           self.globals.insert(name, value);
         }
         OpCode::GetGlobal => {
-          let name = self.read_constant().as_string().ok_or_else(|| {
+          let name = self.read_constant().into_string().ok_or_else(|| {
             InterpreterResult::runtime_error(
               "The identifier being used was not a string and is an internal runtime error",
               self.line(),
@@ -320,14 +325,14 @@ impl VM {
           );
         }
         OpCode::SetGlobal => {
-          let name = self.read_constant().as_string().ok_or_else(|| {
+          let name = self.read_constant().into_string().ok_or_else(|| {
             InterpreterResult::runtime_error(
               "The identifier being used was not a string and is an internal runtime error",
               self.line(),
             )
           })?;
           let value = self.peek();
-          if let None = self.globals.insert(name.clone(), value) {
+          if self.globals.insert(name.clone(), value).is_none() {
             return Err(
               InterpreterResult::runtime_error(
                 format!("Undefined variable '{}'", name),
@@ -413,52 +418,52 @@ impl VM {
       );
     }
     self.frame_count += 1;
-    Ok(self.frames.push(CallFrame {
+    self.frames.push(CallFrame {
       ip: 0,
-      slots: if self.stack.len() == 0 {
+      slots: if self.stack.is_empty() {
         0
       } else {
         self.stack.len() - arg_count as usize
       },
       function,
-    }))
+    });
+
+    Ok(())
   }
 
   // To do make this not hot garbage
+  #[allow(clippy::while_immutable_condition)]
   fn collect_garbage(&mut self) {
     for i in &self.stack {
-      match i {
-        Value::Heap(h) => {
-          let mut pointer = *h;
-          while {
-            self.heap[pointer].1 = true;
-            if let Value::Heap(inner) = self.heap[pointer].0 {
-              pointer = inner;
-              true
-            } else {
-              false
-            }
-          } {}
-        }
-        _ => (),
+      if let Value::Heap(h) = i {
+        let mut pointer = *h;
+        while {
+          self.heap[pointer].1 = true;
+          if let Value::Heap(inner) = self.heap[pointer].0 {
+            pointer = inner;
+            true
+          } else {
+            false
+          }
+        } {}
       }
     }
     // There's nothing to collect so return early
-    if self.heap.len() == 0 {
+    if self.heap.is_empty() {
       return;
     }
     let old_max_index = self.heap.len() - 1;
     self.heap.retain(|(_, alive)| *alive);
-    let offset = old_max_index - (self.heap.len().checked_sub(1).unwrap_or(0));
+    let offset = old_max_index - (self.heap.len().saturating_sub(1));
     self.heap.iter_mut().for_each(|(h, alive)| {
       if let Value::Heap(inner) = h {
-        *inner = *inner - offset;
+        *inner -= offset;
       }
       *alive = false
     });
     self.stack.iter_mut().for_each(|h| {
       if let Value::Heap(inner) = h {
-        *inner = *inner - offset;
+        *inner -= offset;
       }
     });
   }
@@ -494,7 +499,7 @@ impl VM {
       .iter()
       .rev()
       .next()
-      .map(|v| v.clone())
+      .cloned()
       .expect("No value to peek on stack")
   }
   fn peek_n(&mut self, n: usize) -> Value {
@@ -503,7 +508,7 @@ impl VM {
       .iter()
       .rev()
       .nth(n)
-      .map(|v| v.clone())
+      .cloned()
       .expect("No value to peek on stack")
   }
   fn line(&self) -> usize {

@@ -326,7 +326,7 @@ pub enum TokenType {
 }
 
 impl TokenType {
-  pub fn as_usize(&self) -> usize {
+  pub fn as_usize(self) -> usize {
     match self {
       Self::LeftParen => 0,
       Self::RightParen => 1,
