@@ -1,4 +1,5 @@
 use_squash_merge = true
+delete_merged_branches = true
 status = [
   "Check",
   "Test Suite",
