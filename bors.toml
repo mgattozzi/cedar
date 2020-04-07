@@ -1,0 +1,7 @@
+use_squash_merge = true
+status = [
+  "Check",
+  "Test Suite",
+  "Rustfmt",
+  "Clippy",
+]
